@@ -591,7 +591,11 @@ def checks(inv: dict, usage: dict) -> list[dict]:
             mcp_by_name[m["name"]].append(m)
     for n, rows in mcp_by_name.items():
         if len(rows) > 1:
-            add("warn", "duplicate-mcp", f"MCP '{n}' is configured {len(rows)} times at user level",
+            # Claude Code drops a plugin's server that duplicates a manual one, keeping the manual
+            # one's tool names (mcp__<name>__*); removing the manual one would rename the tools.
+            add("info", "duplicate-mcp",
+                f"MCP '{n}' is configured {len(rows)} times at user level (deduplicated at runtime; "
+                f"keep the manual one unless nothing depends on its tool names)",
                 origins=[r["origin"] for r in rows])
     for m in inv["mcp"]:
         if m["name"] not in usage["mcp"]:

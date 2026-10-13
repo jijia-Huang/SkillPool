@@ -50,11 +50,11 @@ python "<本 skill 目錄>/scripts/scan.py" --cwd "<目前工作目錄>" [--days
 
 把 `checks` 翻成人話並排序，另外自己判斷：
 
-- **重複**：同一個 MCP 設了兩份（`duplicate-mcp`）。user 層和專案層各有一份同名 skill（`shadowed-skill`），哪個生效容易搞混。同一個 skill 複製到多個專案（`copied-skill`），副本會各自走樣；要實際比對副本內容，說出差在哪。
+- **重複**：同一個 MCP 設了兩份（`duplicate-mcp`，只當資訊）。plugin 帶的 MCP 和手動設定（`~/.claude.json`）指向同一個 server 時，Claude Code 會自動去重，保留手動那份，工具名稱是 `mcp__<name>__*`。**不要建議刪掉手動那份**：刪了之後工具名稱可能變成帶 plugin 前綴的名稱，permissions 規則、skill 內文和使用習慣都會對不上；要動之前先用 `claude mcp list` 和 permissions 裡的 `mcp__<name>__` 確認依賴。user 層和專案層各有一份同名 skill（`shadowed-skill`），哪個生效容易搞混。同一個 skill 複製到多個專案（`copied-skill`），副本會各自走樣；要實際比對副本內容，說出差在哪。
 - **失效設定**：`override-ignored`（寫在 `~/.claude/settings.local.json`，沒生效）、`skillOverrides` 指到不存在的 skill、`stale-mcp-toggle`（關掉一個早就不存在的 MCP）。
 - **描述品質**：太長（> 250 token）、沒寫觸發情境、兩個 skill 描述高度重疊（模型容易選錯）。
 - **死重**：視窗內 0 次使用、而且目前仍佔清單的 skill；設了卻從沒被呼叫的 MCP。已經 `off` 的不算死重，但長期 off 可以建議封存。`local`／`project` scope 的 plugin skill 只影響那個專案，要分開講。
-- 專案只有 AGENTS.md、沒有 CLAUDE.md 時要提醒：Claude Code 不會自動讀 AGENTS.md。
+- 同一個專案同時有 CLAUDE.md 和 AGENTS.md 時，檢查兩份內容有沒有重複（兩份都會被讀，重複的段落等於付兩次 token）。只有其中一份是正常的。
 
 ### 2.2 用量
 
@@ -117,10 +117,9 @@ python "<本 skill 目錄>/scripts/scan.py" --cwd "<目前工作目錄>" [--days
 | 完全關掉 | `"off"`（plugin 的 skill 不吃這個設定，要用 `/plugin` 停用整個 plugin） |
 | 某個專案關掉某個 MCP | 在那個專案用 `/mcp` 關掉（寫進 `~/.claude.json` 的 `disabledMcpServers`） |
 | 單一 session 用不同設定 | `claude --settings <profile 的 settings.json>`（可帶 `skillOverrides`）＋ `--strict-mcp-config --mcp-config <file>` |
-| 刪掉重複或不用的 MCP | `claude mcp remove <name> -s user`（plugin 帶的 MCP 要停用 plugin，不要用這個） |
+| 刪掉不用的 MCP | `claude mcp remove <name> -s user`（只用在真的沒在用的 server；plugin 帶的 MCP 要停用 plugin。和 plugin 重複的手動設定不要刪，見 2.1） |
 | 指示檔共用同一段內容 | 抽成獨立檔，在 CLAUDE.md 裡用 `@路徑` 引用 |
 | 收斂複製到多個專案的 skill | 搬到 `~/.claude/skills`（全域）或做成 plugin，再刪掉各專案的副本；刪之前先比對副本差異 |
-| 專案只有 AGENTS.md | 新增 CLAUDE.md，內容只寫一行 `@AGENTS.md` |
 
 `skillOverrides` 可以放在 `~/.claude/settings.json`、專案的 `.claude/settings.json`、`.claude/settings.local.json` 或 `--settings` 檔；不要建議放 `~/.claude/settings.local.json`，那裡寫了也不會生效。
 
