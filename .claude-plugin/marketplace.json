@@ -1,0 +1,13 @@
+{
+  "name": "skillpool",
+  "description": "Local marketplace for SkillPool (Claude Code setup organizer).",
+  "owner": {
+    "name": "jijiahuang"
+  },
+  "plugins": [
+    {
+      "name": "skillpool",
+      "source": "./"
+    }
+  ]
+}

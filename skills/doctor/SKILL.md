@@ -1,0 +1,157 @@
+---
+name: doctor
+description: 健檢並重新編排使用者的 Claude Code 設定（skills、MCP、subagents、CLAUDE.md/AGENTS.md 指示檔、skillOverrides），依實際使用紀錄給出分群（profile）與優化建議，產出一份報告。當使用者說「/skillpool:doctor」、「幫我整理 skill」、「我的設定怎麼分群」、「skill 太多了」、「哪些 skill/MCP 沒在用」、「幫我規劃 profile」時使用。
+argument-hint: "[--days N] [想特別看的方向，例如：只看前端相關]"
+---
+
+# SkillPool Doctor
+
+像 `/doctor` 一樣：使用者一叫就直接跑，**不要先問問題**。掃描 → 分析 → 寫報告 → 在對話裡給摘要 → 最後才提供後續選項。
+
+全程**唯讀**：不改任何 settings、skill、`~/.claude.json`，只在報告資料夾 `~/.claude/skillpool/reports/` 寫檔。這個資料夾在 plugin 外面，plugin 更新不會清掉；腳本最後一行會印出實際路徑。報告和摘要一律用繁體中文。
+
+## 1. 掃描
+
+```bash
+python "<本 skill 目錄>/scripts/scan.py" --cwd "<目前工作目錄>" [--days N]
+```
+
+- `<本 skill 目錄>` 就是這份 SKILL.md 所在的資料夾。
+- 需要 Python 3.10+，只用標準函式庫。使用者的 CLAUDE.md 有指定 Python 直譯器（例如某個 conda 環境）就用那個；Windows 上 `python` 找不到時試 `py -3`。
+- 預設看 90 天；使用者有給 `--days` 就照用。
+- 腳本約 10～60 秒（要讀完所有 transcript），console 只印英文計數和報告路徑。
+- 讀它產出的 `scan-<時間>.json`（路徑看腳本最後一行）。結構：
+  - `summary`：總數、每個 session 都會列出的 skill 清單估計佔多少 token
+  - `inventory.skills / agents / instructions / mcp / plugins / settings / project_mcp_state`
+  - `usage.skills`（`by_model` 是模型自己叫的、`by_user` 是使用者打 `/` 叫的）、`usage.mcp`（含 `top_tools`）、`usage.agents`、`usage.co_usage`（同一個 session 一起出現的組合）、`usage.cwds`
+  - `checks`：腳本能確定判斷的問題（level = error / warn / info）
+
+讀欄位時要知道：
+
+- 每個 skill 的 `override` 是**實際生效**的值（來自 `~/.claude/settings.json`）。`override_ignored` 是寫在 `~/.claude/settings.local.json`、實際沒生效的值。`project_overrides` 是各專案自己關掉的。plugin 的 skill 沒有 `override`，因為這個設定管不到它。
+- plugin 的 skill 有 `scope`：`user` 的每個 session 都會列出；`local`／`project` 的只在 `project` 欄位那個專案出現。
+- `usage.skills[*].aliases`：同一個 skill 的別名已經合併（例如 `foo` 併進 `myplugin:foo`）。路徑大小寫不同的同一資料夾（`D:\work`、`D:\Work`）也已經合併。
+- 時間：`usage.*.last` 是 UTC（結尾 `Z`），`generated_at` 是本機時間。
+- `/skillpool:*` 自己的執行不算進用量。
+
+**補上腳本看不到的東西**：你自己 context 裡就有目前 session 的 skill 清單和 MCP 工具清單。
+
+- 內建 skill（plugin-authoring、claude-api…）、claude.ai 帳號帶來的 skill（`anthropic-skills:*`）和 connectors（`mcp__claude_ai_*`）不在磁碟上，要從你看到的清單補進分析。它們的 token 用你看到的「名稱 + 描述」照同一個算法估（中日韓字約 1 token/字，其他約 4 字元/token），並在報告裡標「估計」。
+- `usage.agents` 裡有、但 `inventory.agents` 沒有的 agent 類型（check `agent-types-not-on-disk`），通常是 mod 註冊的（例如 `herdr-commander:*-worker`）。照樣列進用量和分群，不要當成錯誤；看不出來源的標「來源待確認」，不要猜。
+- `claude-in-chrome` 和 `claude_ai_*` 是內建或 claude.ai 帳號帶來的 MCP，本來就不在 `inventory.mcp`，所以 `mcp-used-not-configured` 刻意不對它們觸發。
+- `listing_tokens` 為 0 的 skill 設了 `disable-model-invocation`，模型看不到它，只能由人用 `/` 叫。
+- plugin skill 的 `projects` 列出它在哪些專案被啟用（`local`／`project` scope）。
+- `usage.cwds` 裡的 `(scratchpad)` 是某個 session 的暫存資料夾，不是專案，分群時忽略。
+- 有連線失敗的 MCP（系統訊息裡會寫）也列進健檢。
+
+## 2. 分析方法
+
+### 2.1 健檢（照 /doctor 的 ✓ ⚠ ✗ 呈現）
+
+把 `checks` 翻成人話並排序，另外自己判斷：
+
+- **重複**：同一個 MCP 設了兩份（`duplicate-mcp`）。user 層和專案層各有一份同名 skill（`shadowed-skill`），哪個生效容易搞混。同一個 skill 複製到多個專案（`copied-skill`），副本會各自走樣；要實際比對副本內容，說出差在哪。
+- **失效設定**：`override-ignored`（寫在 `~/.claude/settings.local.json`，沒生效）、`skillOverrides` 指到不存在的 skill、`stale-mcp-toggle`（關掉一個早就不存在的 MCP）。
+- **描述品質**：太長（> 250 token）、沒寫觸發情境、兩個 skill 描述高度重疊（模型容易選錯）。
+- **死重**：視窗內 0 次使用、而且目前仍佔清單的 skill；設了卻從沒被呼叫的 MCP。已經 `off` 的不算死重，但長期 off 可以建議封存。`local`／`project` scope 的 plugin skill 只影響那個專案，要分開講。
+- 專案只有 AGENTS.md、沒有 CLAUDE.md 時要提醒：Claude Code 不會自動讀 AGENTS.md。
+
+### 2.2 用量
+
+列出最常用的 skill / MCP / subagent 類型，以及它們主要在哪些專案（`top_cwds`）。路徑很像的專案（例如 `~/code/game-*`、`~/code/web-*`、`D:\docs\*`）視為同一個「專案家族」。
+
+### 2.3 分群（核心）
+
+先看資料量：`co_usage` 裡 `sessions ≥ 3` 的組合少於 5 組，或視窗內 session 少於 30 個時，「一起被用」這個訊號太弱。這時要在報告開頭講明，主要改靠專案家族、主題和流程相依來分；少數幾組強的組合仍然可以當佐證。
+
+分群的訊號，依可信度排序：
+
+1. **一起被用**：`co_usage` 裡常同時出現的 skill / MCP 應該在同一群。
+2. **在同一個專案家族被用**：`top_cwds` 指向同一家族的放一起。
+3. **主題相同**：描述講的是同一個領域（例如前端開發、多 agent 協作、文件歸檔）。
+4. **流程相依**：A skill 的內容會叫到 B skill 或某個 MCP（讀 SKILL.md 確認），A、B 必須同群。
+
+規則：
+
+- 每群 3～12 個項目。太大就按子流程拆；只有 1 個的併進最接近的群。
+- **規則衝突時，流程相依優先**：一條流程（例如一個依序叫用 review、implement、verify 的 pipeline skill，連同它叫到的所有 skill 和 agent）必須完整放在同一群，這種群可以超過 12 個，在理由裡註明「流程群」就好，不要為了壓數量把成員拆出去。
+- 一個項目可以在多個群。
+- `base` 群：放**通用指示段落**（跟特定領域無關的工作規範），以及**同時滿足**「在 3 個以上專案家族用到」和「超過 10% 的 session 用到」的 skill / MCP / agent。只在一個專案家族用的東西，用量再高也屬於那個領域群，不進 base。沒有東西達到門檻時，`base` 只放指示和常用 agent，**skill 留空是正常的**，不用硬塞。
+- 長期 `off`、而且視窗內沒被用過的 skill，不放進任何群或 profile，另外列成「封存候選」清單。
+- 群名用短的 kebab-case，看名字就知道用途（`web-dev`、`agent-collab`、`docs`）。
+- 每群一定要寫 `whenToUse`：一句話說「什麼任務該用這群」，寫法像 subagent 的 description，因為之後主線會靠它挑 profile。
+- 每群標一個信心等級：`高`（有 co_usage 或流程相依佐證）、`中`（只有專案家族或主題）、`低`（推測，等使用資料累積再確認）。
+- 指示檔（CLAUDE.md / AGENTS.md）也要分：讀 `inventory.instructions[].sections`（每個 `#`／`##` 段落和它的 token），判斷哪些段落是通用的（進 `base`）、哪些只跟某群有關。`imports` 是檔案裡的 `@路徑` 引用。
+
+最後把群組合成 profile（一個 profile = 幾個群 + 指示）。草稿格式（v0，之後的 SkillPool mod 會讀）：
+
+```json
+{
+  "name": "web-dev",
+  "whenToUse": "前端網頁的開發、除錯與瀏覽器測試",
+  "extends": ["base"],
+  "skills": ["frontend-design", "webapp-testing"],
+  "mcp": ["playwright"],
+  "agents": ["verifier"],
+  "instructions": [
+    { "file": "~/.claude/CLAUDE.md", "section": "Code style" },
+    { "file": "~/code/shop/CLAUDE.md", "section": null }
+  ],
+  "confidence": "中",
+  "estTokens": { "listing": 1200, "instructions": 460, "estimated": false }
+}
+```
+
+- `instructions` 每筆是 `{ file, section }`：`section` 填 `sections[].heading` 的原文，`null` 代表整份檔案。
+- `estTokens.listing` 用成員的 `listing_tokens` 加總；`instructions` 用 `instructions` 欄位列出的段落的 `sections[].tokens` 加總（整份檔案就用它的 `tokens`）。專案自己會自動載入的 CLAUDE.md 不寫進 `instructions`，所以也不算進去。只要有任何一項是你估的（例如不在磁碟上的 skill），`estimated` 就填 `true`。
+- 逐項的估計值寫在報告第 3 節「分群建議」每群的成員表裡，標「估計」。
+
+### 2.4 優化建議
+
+依「效益 ÷ 成本」排序，最多 10 條。每條都要有：做什麼、為什麼（引用數據）、怎麼做。給具體做法時優先用這些原生手段：
+
+| 想做的事 | 原生做法 |
+|---|---|
+| 讓模型看不到某 skill，但人還能用 `/` 叫 | `skillOverrides: { "<name>": "user-invocable-only" }` |
+| 清單只留名字，省描述的 token | `"name-only"` |
+| 完全關掉 | `"off"`（plugin 的 skill 不吃這個設定，要用 `/plugin` 停用整個 plugin） |
+| 某個專案關掉某個 MCP | 在那個專案用 `/mcp` 關掉（寫進 `~/.claude.json` 的 `disabledMcpServers`） |
+| 單一 session 用不同設定 | `claude --settings <profile 的 settings.json>`（可帶 `skillOverrides`）＋ `--strict-mcp-config --mcp-config <file>` |
+| 刪掉重複或不用的 MCP | `claude mcp remove <name> -s user`（plugin 帶的 MCP 要停用 plugin，不要用這個） |
+| 指示檔共用同一段內容 | 抽成獨立檔，在 CLAUDE.md 裡用 `@路徑` 引用 |
+| 收斂複製到多個專案的 skill | 搬到 `~/.claude/skills`（全域）或做成 plugin，再刪掉各專案的副本；刪之前先比對副本差異 |
+| 專案只有 AGENTS.md | 新增 CLAUDE.md，內容只寫一行 `@AGENTS.md` |
+
+`skillOverrides` 可以放在 `~/.claude/settings.json`、專案的 `.claude/settings.json`、`.claude/settings.local.json` 或 `--settings` 檔；不要建議放 `~/.claude/settings.local.json`，那裡寫了也不會生效。
+
+表上沒有的做法也可以建議，但要標 ⚠，說明它不是原生設定、需要使用者自己判斷。
+
+## 3. 輸出
+
+1. 寫 `doctor-<時間>.md`，放在 scan JSON 的同一個資料夾，`<時間>` 用 scan 檔名裡的同一個時間。章節固定：
+   1. 健檢
+   2. 用量
+   3. 分群建議（每群：名稱、whenToUse、成員、估計 token、信心等級、分群理由）
+   4. Profile 草稿（上面的 v0 JSON）
+   5. 優化建議（排序過）
+   6. 如何套用（具體指令或設定片段，標明要改哪個檔）
+2. 在對話裡給**短摘要**，格式像 `/doctor`：
+
+```
+SkillPool Doctor（90 天，172 個 session）
+ ✓ 全域 skill 清單約 2.8k token
+ ⚠ playwright MCP 重複設定兩份（plugin + ~/.claude.json）
+ ✗ ...
+建議分成 4 個 profile：base、web-dev、agent-collab、docs
+前 3 條優化：...
+完整報告：<報告路徑>
+```
+
+3. 最後提供後續選項，一句話列出讓使用者挑：調整分群、直接套用某條優化（**套用前先給 diff，使用者同意才改**）、把 profile 草稿存成 SkillPool 的 `profiles/*.json`。
+
+## 注意
+
+- 不要把 transcript 或 scan JSON 整份貼進對話；引用數字就好。
+- 不要輸出任何 MCP 的 env、header、token 或完整 URL query。腳本已經去掉這些，不要自己去讀 `~/.claude.json` 補回來。
+- 資料不足（例如視窗內 session 很少）就明講，降低建議的確定性，不要硬分群。
+- 使用者有給「想特別看的方向」，就把分析聚焦在那裡，其他部分只保留健檢。
