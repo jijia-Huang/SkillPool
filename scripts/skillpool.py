@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -544,6 +545,11 @@ def launch(name: str | None, passthrough: list[str], cwd: Path) -> int:
     # profile's instructions; render it fresh so this profile applies
     if has_flag(passthrough, "-r", "--resume", "-c", "--continue")             and not has_flag(passthrough, "--system-prompt-snapshot"):
         args += ["--system-prompt-snapshot", "off"]
+    # own the session id so the exit hint can say how to resume WITH this profile
+    session = None
+    if not has_flag(passthrough, "-r", "--resume", "-c", "--continue", "-p", "--print", "--session-id"):
+        session = str(uuid.uuid4())
+        args += ["--session-id", session]
     args += passthrough
     env = dict(os.environ, AGENT_PROFILE=name)
     err(f"skillpool: profile '{name}' ({profile['scope']})")
@@ -552,6 +558,8 @@ def launch(name: str | None, passthrough: list[str], cwd: Path) -> int:
     except KeyboardInterrupt:
         return 130
     finally:
+        if session:
+            err(f"skillpool: to resume with this profile: skillpool {name} -r {session}")
         for f in files:  # the MCP run file can hold secrets: never leave it behind
             try:
                 f.unlink()
