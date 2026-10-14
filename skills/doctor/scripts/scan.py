@@ -36,6 +36,7 @@ BUNDLED_SKILLS = {
     "plugin-authoring", "artifact-design", "artifact-diagramming", "artifact-capabilities", "update-config",
     "keybindings-help", "code-review", "simplify", "fewer-permission-prompts", "loop", "schedule", "claude-api",
     "claude-in-chrome", "run", "init", "security-review", "dataviz", "debug", "batch",
+    "design", "design-sync", "verify", "run-skill-generator", "doctor",
 }
 BUNDLED_PREFIXES = ("anthropic-skills:",)
 BUILTIN_AGENTS = {"general-purpose", "Explore", "Plan", "fork", "claude-code-guide", "statusline-setup", "claude"}
@@ -619,6 +620,21 @@ def checks(inv: dict, usage: dict) -> list[dict]:
         for n in state.get("disabledMcpServers", []) + state.get("disabledMcpjsonServers", []):
             if n not in configured and n not in usage["mcp"]:
                 add("info", "stale-mcp-toggle", f"{proj}: disables MCP '{n}', which is no longer configured")
+
+    # CLAUDE.md shadows AGENTS.md in the same folder (verified on 2.1.296): AGENTS.md
+    # is only read where there is no CLAUDE.md, unless CLAUDE.md imports it.
+    inst_by_dir: dict[str, dict[str, dict]] = defaultdict(dict)
+    for i in inv["instructions"]:
+        p = Path(i["path"])
+        inst_by_dir[norm_path(p.parent)][p.name] = i
+    for files in inst_by_dir.values():
+        cm, am = files.get("CLAUDE.md"), files.get("AGENTS.md")
+        if cm and am and not any(Path(x).name == "AGENTS.md" for x in cm["imports"]):
+            # often deliberate (AGENTS.md as the Codex/Cursor entry point), so info, not a warning
+            add("info", "agents-md-shadowed",
+                f"{am['path']} is not read by Claude Code: CLAUDE.md in the same folder takes precedence "
+                f"(~{am['tokens']} tokens; only matters if it holds rules CLAUDE.md lacks)",
+                path=am["path"], claude_md=cm["path"])
 
     agent_names = {a["name"] for a in inv["agents"]}
     from_elsewhere = [a for a in usage["agents"] if a not in agent_names and a not in BUILTIN_AGENTS]

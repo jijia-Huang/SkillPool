@@ -1,6 +1,6 @@
 {
   "name": "skillpool",
-  "version": "0.1.0",
-  "description": "Organize Claude Code skills, MCP servers, subagents and instruction files into profiles. v0.1: /skillpool:doctor analyzes your setup and real usage, then suggests groups and optimizations.",
+  "version": "0.2.0",
+  "description": "Organize Claude Code skills, MCP servers, subagents and instruction files into profiles. /skillpool:doctor suggests groups from your real usage; /skillpool:profile manages profiles; `skillpool <profile>` starts claude with one; each profile also becomes a skillpool-<profile> subagent.",
   "author": { "name": "jijiahuang" }
 }

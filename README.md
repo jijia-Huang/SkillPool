@@ -2,23 +2,102 @@
 
 A Claude Code plugin for organizing your skills, MCP servers, subagents and instruction files (CLAUDE.md / AGENTS.md) into switchable profiles.
 
-把 Claude Code 的 skills、MCP、subagents、指示檔整理成可切換的 profile。
+把 Claude Code 的 skills、MCP、subagents、指示檔整理成可切換的 profile：同一個資料夾可以同時開好幾個設定不同的 session，主線也能依任務挑 profile 派工給 subagent。
 
-## v0.1：`/skillpool:doctor`
+## 三個部分
+
+| | 做什麼 |
+|---|---|
+| `/skillpool:doctor` | 掃描設定和過去 N 天的使用紀錄，給健檢、分群建議和 profile 草稿 |
+| `/skillpool:profile` | 讓 AI 幫你建立、修改、檢查 profile（新的直接存，修改先給 diff） |
+| `skillpool <profile>` | 終端機指令：用某個 profile 開 claude |
+
+每個 profile 也會自動產生一個 `skillpool-<profile>` subagent，主線可以照 profile 的 `whenToUse` 派工。
+
+## `/skillpool:doctor`
 
 類似 `/doctor`：一叫就掃描你的設定和過去 N 天的實際使用紀錄（`~/.claude/projects/**/*.jsonl`），產出：
 
 1. **健檢**：重複的 MCP、沒生效的 `skillOverrides`、複製到多個專案後走樣的 skill、描述品質、沒在用的 skill / MCP
 2. **用量**：哪些 skill / MCP / subagent 最常用、在哪些專案用
-3. **分群建議**與 profile 草稿（含估計 token 成本和信心等級）
-4. **優化建議**和具體套用方式（優先用原生設定：`skillOverrides`、`/mcp`、`--settings`、`@import`）
+3. **分群建議**與 profile 草稿（含估計 token 成本和信心等級），草稿可以直接存成 profile
+4. **優化建議**和具體套用方式（優先用原生設定）
 
-全程唯讀，不改任何設定。報告寫在 `~/.claude/skillpool/reports/`（plugin 外面，plugin 更新不會清掉）。
+全程唯讀。報告寫在 `~/.claude/skillpool/reports/`。
 
 ```
 /skillpool:doctor
 /skillpool:doctor --days 30 只看前端相關
 ```
+
+## Profile
+
+profile 是一個 JSON 檔：
+
+- user 層：`~/.claude/skillpool/profiles/<name>.json`
+- project 層：`<專案>/.claude/skillpool/profiles/<name>.json`
+
+```json
+{
+  "description": "前端網頁開發",
+  "whenToUse": "前端網頁的開發、除錯與瀏覽器測試",
+  "skills": { "only": ["frontend-design", "webapp-testing", "verify"] },
+  "mcp": { "only": ["playwright"] },
+  "plugins": { "off": ["some-plugin"] },
+  "instructions": {
+    "exclude": ["user"],
+    "append": ["web-rules.md", { "file": "~/.claude/CLAUDE.md", "section": "Code style" }]
+  },
+  "model": "sonnet",
+  "agent": { "preloadSkills": ["frontend-design"] }
+}
+```
+
+完整欄位說明在 [`skills/profile/SKILL.md`](skills/profile/SKILL.md)。
+
+全部用 Claude Code 原生的機制，不改你的全域設定：
+
+| profile 欄位 | 對應的原生機制 |
+|---|---|
+| `skills.only` / `on` / `off` / `nameOnly` / `userOnly` | `--settings` 裡的 `skillOverrides`（和全域設定合併；`only` 以外的 skill 預設改成 `user-invocable-only`，人還能用 `/` 叫） |
+| `plugins.off` | `--settings` 裡的 `enabledPlugins` |
+| `mcp.only` | `--strict-mcp-config --mcp-config`（只連這些 server） |
+| `mcp.off` | `permissions.deny: ["mcp__<server>"]`（只藏工具） |
+| `instructions.exclude` | `claudeMdExcludes` |
+| `instructions.append` | `--append-system-prompt-file` |
+
+### 已知限制（Claude Code 2.1.296 實測）
+
+- plugin 的 skill 不吃 `skillOverrides`，只能整個 plugin 停用。
+- `mcp.only` 會拿掉所有 claude.ai connectors；`mcp.off` 只藏工具，server 仍會連線，它的說明仍在 system prompt。
+- 同一層同時有 CLAUDE.md 和 AGENTS.md 時，Claude Code 只讀 CLAUDE.md。
+- subagent 版本只能限制工具／MCP、加 profile 指示、預載核心 skill；**skill 清單和專案 CLAUDE.md 仍然繼承主線的**。要完整隔離就另開 `skillpool <profile>` 的 session。
+
+## `skillpool` 指令
+
+```
+skillpool <profile> [claude 參數...]   用這個 profile 開 claude
+skillpool [claude 參數...]             profile 讀 $AGENT_PROFILE，沒有就開一般的 claude
+skillpool list | show <p> | check [<p>]
+skillpool save <draft.json> --name <p> [--scope user|project] [--force]
+skillpool rm <p> [--force]
+skillpool agents
+skillpool install-shim
+```
+
+- `check` 會用 headless claude 實際載入一次（約 10 秒），列出真正載入了哪些 skills、MCP、agents、plugins。
+- `save` 存新 profile 時直接寫入；同名已存在時只輸出 diff、exit code 3，加 `--force` 才覆蓋（舊檔先備份到 `~/.claude/skillpool/backups/`）。
+- 用 profile 開的 session，環境變數 `AGENT_PROFILE` 會是 profile 名稱。
+- 啟動時產生的設定檔放在 `~/.claude/skillpool/run/`，claude 結束就刪掉（MCP 設定可能含金鑰）。
+
+### 和其他啟動器串接
+
+不需要依賴 SkillPool：任何會開 claude 的工具（例如 agent 編排器）只要
+
+1. 把要用的 profile 名稱放進環境變數 `AGENT_PROFILE`（慣例：任務開頭寫 `[profile: <name>]`，由編排器轉成環境變數），
+2. 把啟動指令從 `claude` 換成 `skillpool`，
+
+就會套用那個 profile；沒裝 SkillPool 時照常用 `claude`。
 
 ## 安裝
 
@@ -38,6 +117,12 @@ claude plugin marketplace add ./SkillPool
 claude plugin install skillpool@skillpool
 ```
 
+接著把 `skillpool` 指令放上 PATH（會放在 `~/.local/bin` 或 `~/bin`，並記住目前的 Python）：
+
+```
+python <SkillPool 資料夾>/scripts/skillpool.py install-shim
+```
+
 需要 Python 3.10+（只用標準函式庫）。
 
 ## 隱私
@@ -48,11 +133,12 @@ claude plugin install skillpool@skillpool
 
 ```
 .claude-plugin/        plugin.json、marketplace.json
-skills/doctor/         SKILL.md + scripts/scan.py
+scripts/skillpool.py   skillpool 指令（啟動器 + profile 管理）
+skills/doctor/         /skillpool:doctor（SKILL.md + scripts/scan.py）
+skills/profile/        /skillpool:profile
 ```
 
 ## Roadmap
 
-- `/skillpool <profile>`：session 中途切換 profile（skill 清單、MCP 可見性、指示檔）
-- `skillpool_dispatch`：主線依 profile 的 `whenToUse` 選設定，派工給 subagent
-- 與其他 agent 啟動器解耦串接：任務標頭 `[profile: x]` → 環境變數 `AGENT_PROFILE`
+- `/skillpool <profile>`：session 中途切換 profile（需要 mod：skill 清單、MCP 可見性）
+- subagent 的 skill 清單也依 profile 過濾（需要 mod）
