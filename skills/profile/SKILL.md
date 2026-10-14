@@ -70,7 +70,7 @@ skillpool <子命令> ...
 
 - `skills.only`：模型只看得到這些 skill。其他 skill 變成 `others` 指定的模式，預設 `off`（模型看不到，人也不能用 `/name` 叫）。想讓人還能用 `/name` 叫就設 `user-invocable-only`（模型看不到、也不能自己呼叫）；`name-only` 是模型只看到名字。使用者原本就設 `off` 的 skill 維持 `off`，profile 不會放寬它。
 - `skills.on / off / nameOnly / userOnly`：逐個指定模式，可以和 `only` 一起用。`on` 能把全域設成 `off` 的 skill 在這個 profile 打開。
-- **plugin 的 skill（`plugin:skill`）不吃 skillOverrides**，`only` 擋不掉它們，`show` 會警告。要擋就把整個 plugin 放進 `plugins.off`（它的 skills、agents、hooks、MCP 一起停用）。plugin 名稱寫 `name` 或 `name@marketplace` 都可以。
+- **plugin 的 skill（`plugin:skill`）不吃 skillOverrides**，`only` 擋不掉它們，`show` 會警告。要擋就把整個 plugin 放進 `plugins.off`（它的 skills、agents、hooks、MCP 一起停用）。plugin 名稱寫 `name` 或 `name@marketplace` 都可以。`skillpool` 自己放進 `plugins.off` 會被略過，否則 `/skillpool` 就不能用了。
 - `mcp.only`：嚴格模式。`"only": []` 代表一個 MCP 都不要（和省略 `mcp` 不同，省略是不改）（`--strict-mcp-config`），只連這些 server，其他的完全不連、工具和 server 說明都不進 context。**claude.ai 的 connectors（Claude Docs、Drive…）在這個模式下全部消失。** mod 自己註冊的工具不是 MCP 設定，會改用隱藏工具的方式擋掉。
 - `mcp.off`：只隱藏這些 server 的工具，server 仍會連線，它的 server 說明仍在 system prompt。想完全拿掉就用 `only`。`only` 和 `off` 只能二選一。
 - `instructions.exclude`：`"user"` = `~/.claude/CLAUDE.md`（含 `~/.claude/rules/`）；`"project"` = 這個資料夾往上所有的 CLAUDE.md、CLAUDE.local.md、AGENTS.md、`.claude/CLAUDE.md`、`.claude/rules/`，以及子資料夾裡的；其他字串當 glob。CLAUDE.md 和 AGENTS.md 在同一層時 Claude Code 只讀 CLAUDE.md，排除 CLAUDE.md 後 AGENTS.md 會冒出來，所以 `project` 兩個都排除。
@@ -97,4 +97,8 @@ profile 檔位置：user 層在 `~/.claude/skillpool/profiles/<name>.json`（所
 - `skillpool` 不帶 profile 名稱時讀環境變數 `AGENT_PROFILE`；都沒有就開一般的 claude。用 profile 開的 session 裡 `AGENT_PROFILE` 會是那個 profile 名稱。
 - **派工給 subagent**：主線接到任務時，從 Agent 工具的清單挑 description 開頭是 `[SkillPool profile: <name>]`、`Use when` 最符合任務的 `skillpool-<name>`。沒有合適的就用一般 agent，不要硬套。
 - subagent 版本的隔離比較弱：它會限制 MCP 和工具、加上 profile 的指示、預載核心 skill，但 **skill 清單和專案的 CLAUDE.md 仍然繼承主線的**。任務需要完整隔離（例如不能被別的 skill 干擾）時，建議使用者另開 `skillpool <name>` 的 session。
-- session 中途切換 profile（`/skillpool <name>`）還沒有，規劃在下一版。
+- **session 中途切換**：人在 session 裡打 `/skillpool <name>`（`/skillpool` 列出 profile，`/skillpool off` 關掉）。這是給人用的指令；你不要自己切，只能建議使用者打。切換後：
+  - profile 以外的 skill（Skill 工具和 `/name`）、MCP 工具、停用 plugin 的 agent 一律被拒絕；
+  - 你會收到一則說明：現在能用哪些 skill／MCP，以及 profile 的指示；
+  - 但已經讀進 context 的 skill 清單和 CLAUDE.md 不會消失（組織管理的 Claude Code 不讓 plugin 改寫它們），照那則說明做，不要用清單上被停用的東西。
+- 用 `skillpool <name>` 開的 session 再用 `/skillpool` 切到別的 profile 時，開啟時關掉的東西不會回來；要完整換成別的 profile，照指令輸出的 `skillpool <name> -r <id>` 重開。

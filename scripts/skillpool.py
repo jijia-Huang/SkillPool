@@ -49,6 +49,7 @@ SUBCOMMANDS = {"list", "show", "check", "save", "rm", "agents", "install-shim", 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 SKILL_MODES = {"on", "off", "name-only", "user-invocable-only"}
 INSTRUCTION_FILES = ["CLAUDE.md", "CLAUDE.local.md", "AGENTS.md"]
+BUILTIN_MCP = ["claude-in-chrome"]
 PROFILE_KEYS = {"description", "whenToUse", "skills", "plugins", "mcp", "instructions", "model", "effort",
                 "agent", "meta"}
 
@@ -331,9 +332,10 @@ def auto_loaded(f: Path, cwd: Path) -> str | None:
     if n in {scan.norm_path(CLAUDE / x) for x in INSTRUCTION_FILES}:
         return "user"
     for d in [cwd, *cwd.parents]:
-        if scan.norm_path(d) == scan.norm_path(HOME):
-            continue
-        if n in {scan.norm_path(d / x) for x in INSTRUCTION_FILES} | {scan.norm_path(d / ".claude" / "CLAUDE.md")}:
+        names = {scan.norm_path(d / x) for x in INSTRUCTION_FILES}
+        if scan.norm_path(d) != scan.norm_path(HOME):  # home's .claude/CLAUDE.md is the user file
+            names.add(scan.norm_path(d / ".claude" / "CLAUDE.md"))
+        if n in names:
             return "project"
     return None
 
@@ -371,10 +373,11 @@ def exclude_globs(kinds: list[str], cwd: Path) -> list[str]:
             globs += [fwd(CLAUDE / n) for n in INSTRUCTION_FILES] + [fwd(CLAUDE / "rules") + "/**"]
         elif k == "project":
             for d in [cwd, *cwd.parents]:
-                if scan.norm_path(d) == scan.norm_path(HOME):
-                    continue  # home's .claude/CLAUDE.md is the user file
+                # an ancestor's CLAUDE.md / AGENTS.md loads here, the home folder's included;
+                # home's .claude/CLAUDE.md is the user file, left to "user"
                 globs += [fwd(d / n) for n in INSTRUCTION_FILES]
-                globs += [fwd(d / ".claude" / "CLAUDE.md"), fwd(d / ".claude" / "rules") + "/**"]
+                if scan.norm_path(d) != scan.norm_path(HOME):
+                    globs += [fwd(d / ".claude" / "CLAUDE.md"), fwd(d / ".claude" / "rules") + "/**"]
             globs += [fwd(cwd) + "/**/" + n for n in INSTRUCTION_FILES]
         else:
             globs.append(k)
@@ -428,6 +431,9 @@ def resolve(profile: dict, cwd: Path) -> dict:
             if not pid:
                 warnings.append(f"plugins.{key}: no installed plugin '{n}'")
                 continue
+            if not val and plugins[pid]["name"] == "skillpool":
+                notes.append("plugins.off: skillpool stays on, so /skillpool can still switch profiles")
+                continue
             enabled[pid] = val
     if enabled:
         settings["enabledPlugins"] = enabled
@@ -470,6 +476,8 @@ def resolve(profile: dict, cwd: Path) -> dict:
             if p not in configured and n not in want and not n.startswith("claude.ai") \
                     and not p.startswith("mcp__claude_ai_"):
                 deny.append(p)
+        # built into Claude Code, so strict mode leaves it: hide by name
+        deny += [mcp_prefix(n) for n in BUILTIN_MCP if n not in want]
     if deny:
         settings["permissions"] = {"deny": sorted(set(deny))}
 

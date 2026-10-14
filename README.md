@@ -11,6 +11,7 @@ A Claude Code plugin for organizing your skills, MCP servers, subagents and inst
 | `/skillpool:doctor` | 掃描設定和過去 N 天的使用紀錄，給健檢、分群建議和 profile 草稿 |
 | `/skillpool:profile` | 讓 AI 幫你建立、修改、檢查 profile（新的直接存，修改先給 diff） |
 | `skillpool <profile>` | 終端機指令：用某個 profile 開 claude |
+| `/skillpool <profile>` | session 裡直接切換 profile，不用重開 |
 
 每個 profile 也會自動產生一個 `skillpool-<profile>` subagent，主線可以照 profile 的 `whenToUse` 派工。
 
@@ -138,9 +139,37 @@ python <SkillPool 資料夾>/scripts/skillpool.py install-shim
 scripts/skillpool.py   skillpool 指令（啟動器 + profile 管理）
 skills/doctor/         /skillpool:doctor（SKILL.md + scripts/scan.py）
 skills/profile/        /skillpool:profile
+hooks/                 mod：/skillpool 切換（register.ts、policy.ts、測試）
+types/                 mod 的 state 型別
 ```
+
+## `/skillpool`：session 中途切換
+
+```
+/skillpool              列出 profile（[on] 是目前的）
+/skillpool docs         切到 docs
+/skillpool off          關掉 profile
+```
+
+由 plugin 裡的 mod（`hooks/`）處理，切換後立刻生效：
+
+- profile 以外的 skill（模型的 Skill 工具、人打的 `/name`）、MCP 工具、停用 plugin 的 subagent 類型一律拒絕，subagent 的呼叫也一樣。
+- 模型會收到一則說明：現在能用哪些 skill／MCP，以及 profile 的 `instructions.append`。
+- 被隱藏的 MCP 工具，描述縮成一行「已停用」。
+- 狀態列顯示目前的 profile。
+
+和 `skillpool <profile>` 重開的差別：
+
+| | `skillpool <profile>` 重開 | `/skillpool <profile>` 切換 |
+|---|---|---|
+| 不用中斷 | ✗ | ✓ |
+| 擋掉 profile 以外的呼叫 | ✓ | ✓ |
+| skill 清單、CLAUDE.md 真的從 context 拿掉 | ✓ | ✗（已讀的留著，模型被告知不要用） |
+| MCP server 不連線 | ✓（`mcp.only`） | ✗（連著，但工具被擋） |
+
+切換不能真的改寫 skill 清單和 CLAUDE.md，是因為組織（Team／Enterprise）管理的 Claude Code 不讓個人安裝的 plugin 改寫它們。用 `skillpool <profile>` 開的 session 再切到別的 profile 時，開啟時關掉的東西不會回來；要完整換就照指令輸出的 `skillpool <profile> -r <session id>` 重開。
 
 ## Roadmap
 
-- `/skillpool <profile>`：session 中途切換 profile（需要 mod：skill 清單、MCP 可見性）
-- subagent 的 skill 清單也依 profile 過濾（需要 mod）
+- 沒有組織管理的環境：切換時直接改寫 skill 清單和 CLAUDE.md
+- subagent 的 skill 清單也依 profile 過濾
