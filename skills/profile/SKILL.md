@@ -95,6 +95,10 @@ profile 檔位置：user 層在 `~/.claude/skillpool/profiles/<name>.json`（所
 
 - **整個 session 換 profile 只有人能做**：人在終端機執行 `skillpool <name>`，就會在目前資料夾開一個用這個 profile 的新 claude（其他參數照常傳給 claude，例如 `skillpool web-dev -c`）。不要試圖重開或切換自己這個 session，只能建議使用者這樣開。
 - `skillpool` 不帶 profile 名稱時讀環境變數 `AGENT_PROFILE`；都沒有就開一般的 claude。用 profile 開的 session 裡 `AGENT_PROFILE` 會是那個 profile 名稱。
+- **派一個完整隔離的 agent**（skill 清單也真的只剩 profile 的）：用 Bash 跑原生的 headless 或背景 session。
+  - `skillpool <name> -p "任務"`：跑完把結果印回來，適合要拿結果繼續做的工作。
+  - `skillpool <name> --bg "任務"`：背景執行，回報它印出的 id，之後用 `claude logs <id>` 看進度、`claude attach <id>` 接手。
+  - 這會花另一個 session 的額度，只在使用者要你派工、或任務明顯需要乾淨設定時用。
 - **派工給 subagent**：主線接到任務時，從 Agent 工具的清單挑 description 開頭是 `[SkillPool profile: <name>]`、`Use when` 最符合任務的 `skillpool-<name>`。沒有合適的就用一般 agent，不要硬套。
 - subagent 版本：限制 MCP 和工具、加上 profile 的指示、預載核心 skill，profile 排除指示檔時不讀 CLAUDE.md，profile 以外的 skill 被呼叫時由 SkillPool 擋下。但 **skill 清單仍是主線那份**（看得到、用了被擋）。任務需要清單真的乾淨時，建議使用者另開 `skillpool <name>` 的 session。
 - **session 中途切換**：人在 session 裡打 `/skillpool <name>`（`/skillpool` 列出 profile，`/skillpool off` 關掉）。這是給人用的指令；你不要自己切，只能建議使用者打。切換後：

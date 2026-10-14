@@ -174,6 +174,9 @@ skillpool install-shim
 - `save` 存新 profile 時直接寫入；同名已存在時只輸出 diff、exit code 3，加 `--force` 才覆蓋（舊檔先備份到 `~/.claude/skillpool/backups/`）。
 - 用 profile 開的 session，環境變數 `AGENT_PROFILE` 會是 profile 名稱。
 - 啟動時產生的設定檔放在 `~/.claude/skillpool/run/`，claude 結束就刪掉（MCP 設定可能含金鑰）。
+- 派一個獨立的 agent 去做事，用 Claude Code 原生的兩種方式，profile 都完整生效（skill 清單也真的變短）：
+  - `skillpool <profile> -p "任務"`：跑完印出結果（headless）。
+  - `skillpool <profile> --bg "任務"`：開成背景 session，用 `claude agents`、`claude logs <id>`、`claude attach <id>` 查看。它的設定檔會留到 `claude rm <id>` 移除那個背景 session 之後，下次啟動 `skillpool` 時才清掉。
 
 ### 和其他啟動器串接
 

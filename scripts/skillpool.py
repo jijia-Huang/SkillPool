@@ -535,10 +535,11 @@ def sweep_run_dir() -> None:
             f.unlink(missing_ok=True)
 
 
-def write_run_files(name: str, plan: dict) -> tuple[list[str], list[Path]]:
+def write_run_files(name: str, plan: dict, stem: str | None = None) -> tuple[list[str], list[Path]]:
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     sweep_run_dir()
-    stem = f"{name}-{os.getpid()}"
+    sweep_background()
+    stem = stem or f"{name}-{os.getpid()}"
     args, files = [], []
     if plan["settings"]:
         f = RUN_DIR / f"{stem}-settings.json"
@@ -571,7 +572,9 @@ def launch(name: str | None, passthrough: list[str], cwd: Path) -> int:
     plan = resolve(profile, cwd)
     for w in plan["warnings"]:
         err(f"skillpool: warning: {w}")
-    run_args, files = write_run_files(name, plan)
+    is_bg = has_flag(passthrough, "--bg", "--background")
+    token = uuid.uuid4().hex
+    run_args, files = write_run_files(name, plan, f"bg-{token}" if is_bg else None)
     args = [exe, *run_args]
     # the user's own flags win over the profile's
     for flag, val in zip(plan["args"][::2], plan["args"][1::2]):
@@ -581,16 +584,20 @@ def launch(name: str | None, passthrough: list[str], cwd: Path) -> int:
         args += ["--name", name]
     # a resumed conversation reuses its recorded system prompt, which would keep the old
     # profile's instructions; render it fresh so this profile applies
-    if has_flag(passthrough, "-r", "--resume", "-c", "--continue")             and not has_flag(passthrough, "--system-prompt-snapshot"):
+    is_resume = has_flag(passthrough, "-r", "--resume", "-c", "--continue")
+    if is_resume and not has_flag(passthrough, "--system-prompt-snapshot"):
         args += ["--system-prompt-snapshot", "off"]
     # own the session id so the exit hint can say how to resume WITH this profile
+    # (a background session picks its own id, so it gets none)
     session = None
-    if not has_flag(passthrough, "-r", "--resume", "-c", "--continue", "-p", "--print", "--session-id"):
+    if not is_bg and not is_resume and not has_flag(passthrough, "-p", "--print", "--session-id"):
         session = str(uuid.uuid4())
         args += ["--session-id", session]
     args += passthrough
     env = dict(os.environ, AGENT_PROFILE=name)
     err(f"skillpool: profile '{name}' ({profile['scope']})")
+    if is_bg:
+        return launch_background(args, env, files, token)
     try:
         return subprocess.call(args, env=env)
     except KeyboardInterrupt:
@@ -603,6 +610,41 @@ def launch(name: str | None, passthrough: list[str], cwd: Path) -> int:
                 f.unlink()
             except OSError:
                 pass
+
+
+BG_ID = re.compile(r"claude (?:logs|attach|stop) ([0-9a-f]{6,})")
+
+
+def launch_background(args: list[str], env: dict, files: list[Path], token: str) -> int:
+    """`--bg` returns at once while the session it started reads the run files later: keep them,
+    note which session holds them, and let sweep_background() drop them once that session is removed."""
+    p = subprocess.run(args, env=env, stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    sys.stdout.write(p.stdout)
+    m = BG_ID.search(p.stdout)
+    if m:
+        (RUN_DIR / f"bg-{token}.id").write_text(m.group(1), encoding="utf-8")
+    else:  # nothing started, so nothing will read them
+        for f in files:
+            f.unlink(missing_ok=True)
+    return p.returncode
+
+
+def sweep_background() -> None:
+    """Drop a background session's run files once `claude agents` no longer lists it."""
+    marks = list(RUN_DIR.glob("bg-*.id")) if RUN_DIR.is_dir() else []
+    if not marks:
+        return
+    try:
+        out = subprocess.run([claude_exe(), "agents", "--json", "--all"], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=60, stdin=subprocess.DEVNULL).stdout
+        live = {a.get("id") for a in json.loads(out)}
+    except Exception:
+        return  # cannot tell: keep them
+    for mark in marks:
+        token = mark.stem[len("bg-"):]
+        if mark.read_text(encoding="utf-8").strip() not in live:
+            for f in RUN_DIR.glob(f"bg-{token}*"):
+                f.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------- check
