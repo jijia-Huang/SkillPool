@@ -103,7 +103,7 @@ python "<本 skill 目錄>/scripts/scan.py" --cwd "<目前工作目錄>" [--days
 ```
 
 - profile 沒有繼承：`base` 群的成員要直接寫進每個 profile 的 `skills.only`／`mcp.only`。
-- `skills.only` 以外的 skill 預設變成 `user-invocable-only`（模型看不到，人還能用 `/` 叫）。plugin 的 skill 擋不掉，要擋就把整個 plugin 放進 `plugins.off`。
+- `skills.only` 以外的 skill 預設整個關掉（`off`，人也不能用 `/` 叫）；要保留 `/` 就加 `"others": "user-invocable-only"`。plugin 的 skill 擋不掉，要擋就把整個 plugin 放進 `plugins.off`。
 - `mcp.only` 會拿掉所有 claude.ai connectors；只想藏幾個 server 就用 `mcp.off`。
 - `instructions.append` 每筆是檔案路徑或 `{ file, section }`：`section` 填 `sections[].heading` 的原文。`exclude` 填 `"user"`（全域 CLAUDE.md）、`"project"`（這個專案的 CLAUDE.md／AGENTS.md）或 glob。要用全域指示的某幾段、又不要整份，就 `exclude: ["user"]` 加 `append` 那幾段。
 - `meta.estTokens.listing` 用成員的 `listing_tokens` 加總；`instructions` 用 `append` 列出的段落的 `sections[].tokens` 加總（整份檔案就用它的 `tokens`）。專案自己會自動載入的 CLAUDE.md 不算進去。只要有任何一項是你估的（例如不在磁碟上的 skill），`estimated` 就填 `true`。

@@ -59,7 +59,7 @@ profile 是一個 JSON 檔：
 
 | profile 欄位 | 對應的原生機制 |
 |---|---|
-| `skills.only` / `on` / `off` / `nameOnly` / `userOnly` | `--settings` 裡的 `skillOverrides`（和全域設定合併；`only` 以外的 skill 預設改成 `user-invocable-only`，人還能用 `/` 叫） |
+| `skills.only` / `on` / `off` / `nameOnly` / `userOnly` | `--settings` 裡的 `skillOverrides`（和全域設定合併；`only` 以外的 skill 預設關掉；設 `"others": "user-invocable-only"` 則只對模型藏起來，人還能用 `/` 叫） |
 | `plugins.off` | `--settings` 裡的 `enabledPlugins` |
 | `mcp.only` | `--strict-mcp-config --mcp-config`（只連這些 server） |
 | `mcp.off` | `permissions.deny: ["mcp__<server>"]`（只藏工具） |
@@ -72,7 +72,7 @@ profile 是一個 JSON 檔：
 - `mcp.only` 會拿掉所有 claude.ai connectors；`mcp.off` 只藏工具，server 仍會連線，它的說明仍在 system prompt。
 - 同一層同時有 CLAUDE.md 和 AGENTS.md 時，Claude Code 只讀 CLAUDE.md。
 - 接續舊對話（`skillpool <profile> -c` / `-r`）時，Claude Code 預設會沿用舊對話記錄下來的 system prompt；`skillpool` 會自動加 `--system-prompt-snapshot off`，讓新 profile 的指示生效。
-- `user-invocable-only` 的 skill 依官方文件仍可用 `/name` 叫，這點還沒實測。
+- `user-invocable-only` 的 skill：人可以用 `/name` 叫，模型自己呼叫會被拒絕（實測）。
 - subagent 版本只能限制工具／MCP、加 profile 指示、預載核心 skill；**skill 清單和專案 CLAUDE.md 仍然繼承主線的**。要完整隔離就另開 `skillpool <profile>` 的 session。
 
 ## `skillpool` 指令

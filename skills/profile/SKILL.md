@@ -52,7 +52,7 @@ skillpool <子命令> ...
   "whenToUse": "什麼任務該用它，寫法像 subagent 的 description（主線會靠它挑 profile）",
   "skills": {
     "only": ["frontend-design", "webapp-testing"],
-    "others": "user-invocable-only",
+    "others": "off",
     "on": [], "off": [], "nameOnly": [], "userOnly": []
   },
   "plugins": { "off": ["some-plugin"], "on": [] },
@@ -68,7 +68,7 @@ skillpool <子命令> ...
 }
 ```
 
-- `skills.only`：模型只看得到這些 skill。其他 skill 變成 `others` 指定的模式，預設 `user-invocable-only`（模型看不到，人還能用 `/name` 叫）；可改 `name-only` 或 `off`。使用者原本就設 `off` 的 skill 維持 `off`，profile 不會放寬它。
+- `skills.only`：模型只看得到這些 skill。其他 skill 變成 `others` 指定的模式，預設 `off`（模型看不到，人也不能用 `/name` 叫）。想讓人還能用 `/name` 叫就設 `user-invocable-only`（模型看不到、也不能自己呼叫）；`name-only` 是模型只看到名字。使用者原本就設 `off` 的 skill 維持 `off`，profile 不會放寬它。
 - `skills.on / off / nameOnly / userOnly`：逐個指定模式，可以和 `only` 一起用。`on` 能把全域設成 `off` 的 skill 在這個 profile 打開。
 - **plugin 的 skill（`plugin:skill`）不吃 skillOverrides**，`only` 擋不掉它們，`show` 會警告。要擋就把整個 plugin 放進 `plugins.off`（它的 skills、agents、hooks、MCP 一起停用）。plugin 名稱寫 `name` 或 `name@marketplace` 都可以。
 - `mcp.only`：嚴格模式。`"only": []` 代表一個 MCP 都不要（和省略 `mcp` 不同，省略是不改）（`--strict-mcp-config`），只連這些 server，其他的完全不連、工具和 server 說明都不進 context。**claude.ai 的 connectors（Claude Docs、Drive…）在這個模式下全部消失。** mod 自己註冊的工具不是 MCP 設定，會改用隱藏工具的方式擋掉。

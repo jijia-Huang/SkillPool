@@ -395,7 +395,7 @@ def resolve(profile: dict, cwd: Path) -> dict:
     overridable, plugin_skills = skill_universe(cwd)
     if "only" in sk:
         keep = set(sk["only"])
-        others = sk.get("others", "user-invocable-only")
+        others = sk.get("others", "off")
         already = current_overrides(cwd)
         for n in sorted(overridable - keep):
             if already.get(n) != "off":  # never loosen a skill the user switched off
