@@ -22,8 +22,9 @@ skillpool <子命令> ...
 |---|---|
 | `list [--json]` | 列出這個資料夾看得到的 profile（user 和 project 兩層，同名時 project 優先） |
 | `show <name> [--json]` | 這個 profile 會改什麼、實際的 claude 指令、警告。不啟動 claude |
+| `show --draft <草稿> --name <name> [--scope ...]` | 同上，但看的是還沒存的草稿（存之前先用這個檢查）。`--scope` 的預設和 `save` 一樣，它也決定相對路徑從哪裡算。有 warning 時 exit code 是 4 |
 | `check [<name>]` | 用 headless claude 實際載入一次（約 10 秒），列出真正載入的 skills、MCP、agents、plugins，並更新內建 skill 名稱快取 |
-| `save <draft.json> --name <name> [--scope user\|project] [--force]` | 存 profile。見下面的規則 |
+| `save <draft.json> --name <name> [--scope user\|project] [--force]` | 存 profile。見下面的規則。不給 `--scope` 時：同名 profile 已存在就沿用它的層級，否則存到 user 層 |
 | `rm <name> [--force]` | 刪 profile 和它產生的 subagent |
 | `agents [--dry-run]` | 重新產生所有 `skillpool-<name>` subagent |
 | `install-shim` | 在 PATH 上放一個 `skillpool` 指令 |
@@ -34,7 +35,10 @@ skillpool <子命令> ...
 - **新的 profile 直接存**：把草稿寫到 scratchpad（或報告資料夾），執行 `skillpool save <草稿> --name <name>`。輸出 `created:` 就完成了。
 - **修改既有的 profile 要先給使用者看 diff**：一樣用 `save`、**不加** `--force`。同名 profile 已經存在時，指令會回 exit code 3，把 diff 寫到它印出的檔案路徑，不會改任何東西。用 Read 讀那個 diff 檔，用 ```diff 區塊原樣貼給使用者，問要不要套用。使用者明確同意後才加 `--force` 重跑（會先自動備份舊檔到 `~/.claude/skillpool/backups/profiles/`）。
 - **刪除也要先問**：`rm <name>` 不加 `--force` 只會說明會刪什麼；使用者同意後才加 `--force`。
+- `save --force` 和 `rm --force` 會寫 `.claude/agents/` 和 `~/.claude/skillpool/backups/`，可能跳出權限確認，或被 auto mode 當成修改設定擋下。被擋時**不要重試或繞過**，把完整指令給使用者自己執行（`! cd "<資料夾>" && skillpool save <草稿> --name <name> --force`），或請使用者放行後再跑。
 - 使用者已經在這次對話裡明確說「直接改，不用給我看」時，可以直接 `--force`，但回報時仍要附上 diff 檔的摘要。
+
+這些指令另外會在 `~/.claude/skillpool/` 底下寫快取（`cache/`）、diff 和啟動用的暫存檔（`run/`），以及備份（`backups/`）；這些不是 profile，不用另外問。
 
 `save` 成功後會自動產生或更新 `skillpool-<name>` subagent（user profile 寫到 `~/.claude/agents/`，project profile 寫到 `<專案>/.claude/agents/`）。新的 subagent 從下一個 session 開始出現在 Agent 工具的清單裡。profile 設了 `"agent": false` 就不產生。
 
@@ -67,10 +71,10 @@ skillpool <子命令> ...
 - `skills.only`：模型只看得到這些 skill。其他 skill 變成 `others` 指定的模式，預設 `user-invocable-only`（模型看不到，人還能用 `/name` 叫）；可改 `name-only` 或 `off`。使用者原本就設 `off` 的 skill 維持 `off`，profile 不會放寬它。
 - `skills.on / off / nameOnly / userOnly`：逐個指定模式，可以和 `only` 一起用。`on` 能把全域設成 `off` 的 skill 在這個 profile 打開。
 - **plugin 的 skill（`plugin:skill`）不吃 skillOverrides**，`only` 擋不掉它們，`show` 會警告。要擋就把整個 plugin 放進 `plugins.off`（它的 skills、agents、hooks、MCP 一起停用）。plugin 名稱寫 `name` 或 `name@marketplace` 都可以。
-- `mcp.only`：嚴格模式（`--strict-mcp-config`），只連這些 server，其他的完全不連、工具和 server 說明都不進 context。**claude.ai 的 connectors（Claude Docs、Drive…）在這個模式下全部消失。** mod 自己註冊的工具不是 MCP 設定，會改用隱藏工具的方式擋掉。
+- `mcp.only`：嚴格模式。`"only": []` 代表一個 MCP 都不要（和省略 `mcp` 不同，省略是不改）（`--strict-mcp-config`），只連這些 server，其他的完全不連、工具和 server 說明都不進 context。**claude.ai 的 connectors（Claude Docs、Drive…）在這個模式下全部消失。** mod 自己註冊的工具不是 MCP 設定，會改用隱藏工具的方式擋掉。
 - `mcp.off`：只隱藏這些 server 的工具，server 仍會連線，它的 server 說明仍在 system prompt。想完全拿掉就用 `only`。`only` 和 `off` 只能二選一。
 - `instructions.exclude`：`"user"` = `~/.claude/CLAUDE.md`（含 `~/.claude/rules/`）；`"project"` = 這個資料夾往上所有的 CLAUDE.md、CLAUDE.local.md、AGENTS.md、`.claude/CLAUDE.md`、`.claude/rules/`，以及子資料夾裡的；其他字串當 glob。CLAUDE.md 和 AGENTS.md 在同一層時 Claude Code 只讀 CLAUDE.md，排除 CLAUDE.md 後 AGENTS.md 會冒出來，所以 `project` 兩個都排除。
-- `instructions.append`：加進 system prompt 的內容。字串是檔案路徑（相對於 profile 檔所在資料夾，可用 `~`）；`{file, section}` 只取那個 `#`／`##` 標題底下的段落（`section` 寫標題原文）。用全域 CLAUDE.md 的某幾段、又不要整份：`exclude: ["user"]` 加 `append` 那幾段。
+- `instructions.append`：加進 system prompt 的內容。字串是檔案路徑，可用 `~`；相對路徑在 **project profile 從專案根目錄算**（例如 `CLAUDE.md`），在 user profile 從 `~/.claude/skillpool/profiles/` 算；`{file, section}` 只取那個 `#`／`##` 標題底下的段落（`section` 寫標題原文）。只要某份指示檔的幾段、不要整份：把那份排除（全域的用 `"user"`，專案的用 `"project"`），再用 `append` 加回那幾段。沒排除就 append 同一份檔案，內容會載入兩次，`show` 會警告。
 - `model`、`effort`：這個 profile 開 session 時的預設值；使用者在指令列自己給的參數優先。
 - `agent`：產生 `skillpool-<name>` subagent 的設定。`preloadSkills` 會把那幾個 skill 的**全文**預先載入 subagent（每次派工都付這個 token），只放 1～3 個核心的。`tools` 是工具白名單（不給就繼承全部）。`disallowedTools` 額外要擋的工具，只能放工具名稱或 `mcp__<server>`，**不要放 `Skill(x)`**，那會讓整個 Skill 工具消失。
 - `meta`：自由欄位（信心等級、來源），程式不讀。
@@ -81,10 +85,11 @@ profile 檔位置：user 層在 `~/.claude/skillpool/profiles/<name>.json`（所
 
 1. `skillpool list --json` 看現有的 profile，避免重複。
 2. 弄清楚素材：沒有 doctor 報告時跑 `skillpool check`（看目前實際有哪些 skill、MCP、plugin），需要用量資料就建議使用者先跑 `/skillpool:doctor`。有 doctor 報告就用它的分群和 `profile-<name>.json` 草稿。
-3. 寫草稿 JSON（修改時先 Read 現有的 profile 檔，在它的基礎上改），用 `save` 存（照上面的寫入規則）。
-4. `skillpool show <name>` 看警告（找不到的 skill 名稱、擋不掉的 plugin skill、找不到的檔案），有問題就修草稿再存。
-5. 想確認實際效果就 `skillpool check <name>`。
-6. 回報：存在哪、模型會看到幾個 skill／哪些 MCP、有哪些警告，以及怎麼用（下一節）。
+3. 寫草稿 JSON（修改時先 Read 現有的 profile 檔，在它的基礎上改），放在 scratchpad 或報告資料夾。
+4. **存之前**用 `skillpool show --draft <草稿> --name <name> [--scope ...]` 檢查：`warning` 是要修的（找不到的 skill、檔案、段落、會重複載入的指示檔），`note` 是原生機制的限制。修好草稿再看一次，直到沒有 warning。這樣第一次 `save` 就是最終版，不會一建好就變成「修改」而要再問使用者。
+5. 特別看 `note` 裡「plugin skill 擋不掉」那條：使用者要的是「模型只看到這幾個 skill」時，那些 plugin skill 會多出來。先問使用者要不要把那些 plugin 放進 `plugins.off`（副作用：那個 plugin 的 skills、agents、hooks、MCP、`/plugin:*` 指令在這個 profile 裡全部停用），再決定草稿內容。等使用者回答之前**整個 profile 都先不要存**，免得存了又要改。
+6. 用 `save` 存（照上面的寫入規則）。想確認實際效果就 `skillpool check <name>`。
+7. 回報：存在哪、模型會看到幾個 skill／哪些 MCP、有哪些警告，以及怎麼用（下一節）。
 
 ## 切換與派工
 

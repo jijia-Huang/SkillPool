@@ -8,6 +8,7 @@ folder can run with different setups:
     skillpool [claude args...]             profile from $AGENT_PROFILE, else plain claude
     skillpool list [--json]                profiles visible from this folder
     skillpool show <profile> [--json]      what a profile changes, without launching
+    skillpool show --draft <file> [--name N] [--scope S]   same, for a draft before saving
     skillpool check [<profile>]            start claude headless and read what really loaded
     skillpool save <draft.json> [--name N] [--scope user|project] [--force]
     skillpool rm <profile> [--force]
@@ -68,8 +69,10 @@ def fwd(p: Path | str) -> str:
 
 
 def mcp_prefix(server: str) -> str:
-    """Tool prefix Claude Code gives a server: `claude.ai Claude Docs` -> `mcp__claude_ai_Claude_Docs`."""
-    return "mcp__" + re.sub(r"[^A-Za-z0-9_-]", "_", server)
+    """Tool prefix Claude Code gives a server: `claude.ai Claude Docs` -> `mcp__claude_ai_Claude_Docs`.
+    Non-ASCII characters are dropped, other invalid ones become `_` (a CJK suffix on `claude.ai magnificAI...` is dropped)."""
+    ascii_only = "".join(c for c in server if ord(c) < 128)
+    return "mcp__" + re.sub(r"[^A-Za-z0-9_-]", "_", ascii_only)
 
 
 # ---------------------------------------------------------------- locations
@@ -316,12 +319,35 @@ def expand(path: str, base: Path) -> Path:
     return p if p.is_absolute() else (base / p)
 
 
-def append_text(profile: dict, warnings: list[str]) -> str:
+def profile_base(profile: dict) -> Path:
+    """Relative paths in a project profile start at the project root; in a user profile, at its folder."""
+    return profile["path"].parents[3] if profile["scope"] == "project" else profile["path"].parent
+
+
+def auto_loaded(f: Path, cwd: Path) -> str | None:
+    """'user' / 'project' when Claude Code already loads this file here by itself."""
+    n = scan.norm_path(f)
+    if n in {scan.norm_path(CLAUDE / x) for x in INSTRUCTION_FILES}:
+        return "user"
+    for d in [cwd, *cwd.parents]:
+        if scan.norm_path(d) == scan.norm_path(HOME):
+            continue
+        if n in {scan.norm_path(d / x) for x in INSTRUCTION_FILES} | {scan.norm_path(d / ".claude" / "CLAUDE.md")}:
+            return "project"
+    return None
+
+
+def append_text(profile: dict, warnings: list[str], cwd: Path | None = None) -> str:
     parts = []
-    base = profile["path"].parent
+    base = profile_base(profile)
+    excluded = set(profile["data"].get("instructions", {}).get("exclude", []))
     for item in profile["data"].get("instructions", {}).get("append", []):
         file, section = (item, None) if isinstance(item, str) else (item["file"], item.get("section"))
         f = expand(file, base)
+        kind = auto_loaded(f, cwd) if cwd else None
+        if kind and kind not in excluded:
+            warnings.append(f"instructions.append: {fwd(f)} is already loaded automatically, so it would load "
+                            f"twice; add \"{kind}\" to instructions.exclude")
         if not f.is_file():
             warnings.append(f"instructions.append: {fwd(f)} not found, skipped")
             continue
@@ -450,7 +476,7 @@ def resolve(profile: dict, cwd: Path) -> dict:
     ins = data.get("instructions", {})
     if ins.get("exclude"):
         settings["claudeMdExcludes"] = exclude_globs(ins["exclude"], cwd)
-    prompt = append_text(profile, warnings)
+    prompt = append_text(profile, warnings, cwd)
 
     args: list[str] = []
     if data.get("model"):
@@ -638,8 +664,25 @@ def cmd_list(cwd: Path, as_json: bool) -> int:
     return 0
 
 
-def cmd_show(name: str, cwd: Path, as_json: bool) -> int:
-    profile = get_profile(cwd, name)
+def draft_profile(draft: Path, name: str | None, scope: str | None, cwd: Path) -> dict:
+    """A draft file as if it were saved: same name, scope and path rules as `save`."""
+    try:
+        data = json.loads(draft.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise UserError(f"cannot read draft {fwd(draft)}: {e}")
+    name = name or draft.stem
+    if not NAME_RE.match(name) or name in SUBCOMMANDS:
+        raise UserError(f"bad profile name '{name}': use lowercase letters, digits and '-', not a subcommand")
+    errors = validate(data)
+    if errors:
+        raise UserError("draft is invalid: " + "; ".join(errors))
+    existing = load_profiles(cwd).get(name)
+    scope = scope or (existing["scope"] if existing else "user")
+    return {"name": name, "scope": scope, "path": target_path(name, scope, cwd), "data": data, "errors": []}
+
+
+def cmd_show(name: str, cwd: Path, as_json: bool, profile: dict | None = None) -> int:
+    profile = profile or get_profile(cwd, name)
     plan = resolve(profile, cwd)
     cmd = ["claude"]
     if plan["settings"]:
@@ -658,8 +701,9 @@ def cmd_show(name: str, cwd: Path, as_json: bool) -> int:
     }
     if as_json:
         out(json.dumps(view, ensure_ascii=True, indent=2))
-        return 0
-    out(f"profile '{name}' ({profile['scope']}): {fwd(profile['path'])}")
+        return 4 if plan["warnings"] else 0
+    saved = profile["path"].is_file() and profile["data"] == (scan.read_json(profile["path"]) or {})
+    out(f"profile '{name}' ({profile['scope']}): {fwd(profile['path'])}" + ("" if saved else " [draft, not saved]"))
     ov = plan["settings"].get("skillOverrides", {})
     by_mode: dict[str, list[str]] = {}
     for n, m in ov.items():
@@ -682,7 +726,7 @@ def cmd_show(name: str, cwd: Path, as_json: bool) -> int:
         out(f"  warning: {w}")
     for w in plan["notes"]:
         out(f"  note: {w}")
-    return 0
+    return 4 if plan["warnings"] else 0
 
 
 # ---------------------------------------------------------------- save / rm
@@ -705,19 +749,10 @@ def backup(path: Path) -> Path:
     return dest
 
 
-def cmd_save(draft: Path, name: str | None, scope: str, force: bool, cwd: Path) -> int:
+def cmd_save(draft: Path, name: str | None, scope: str | None, force: bool, cwd: Path) -> int:
     """New profile: written directly. Existing profile: write a diff and stop unless --force."""
-    try:
-        data = json.loads(draft.read_text(encoding="utf-8"))
-    except Exception as e:
-        raise UserError(f"cannot read draft {fwd(draft)}: {e}")
-    name = name or draft.stem
-    if not NAME_RE.match(name) or name in SUBCOMMANDS:
-        raise UserError(f"bad profile name '{name}': use lowercase letters, digits and '-', not a subcommand")
-    errors = validate(data)
-    if errors:
-        raise UserError("draft is invalid: " + "; ".join(errors))
-    path = target_path(name, scope, cwd)
+    prof = draft_profile(draft, name, scope, cwd)
+    name, data, path = prof["name"], prof["data"], prof["path"]
     new_text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
     if path.exists():
         old_text = path.read_text(encoding="utf-8")
@@ -778,6 +813,7 @@ def agent_text(profile: dict, cwd: Path) -> str:
     desc = data.get("description", "").strip() or profile["name"]
     when = data.get("whenToUse", "").strip()
     sep = "" if desc[-1] in ".。!！?？" else "."
+    when = re.sub(r"^use (it |this )?when[:,]?\s*", "", when, flags=re.I)
     description = f"[SkillPool profile: {profile['name']}] {desc}{sep}" + (f" Use when: {when}" if when else "")
     # only server-level MCP denies are safe here: a Skill(x) entry would remove the whole Skill tool
     deny = [d for d in plan["settings"].get("permissions", {}).get("deny", []) if d.startswith("mcp__")]
@@ -912,16 +948,20 @@ def main(argv: list[str]) -> int:
         if first == "list":
             return cmd_list(cwd, as_json)
         if first == "show":
+            draft = take_value(rest, "--draft")
+            if draft:
+                prof = draft_profile(Path(draft), take_value(rest, "--name"), take_value(rest, "--scope"), cwd)
+                return cmd_show(prof["name"], cwd, as_json, prof)
             if not rest:
-                raise UserError("usage: skillpool show <profile>")
+                raise UserError("usage: skillpool show <profile> | show --draft <file> [--name N] [--scope S]")
             return cmd_show(rest[0], cwd, as_json)
         if first == "check":
             return cmd_check(rest[0] if rest else None, cwd, as_json)
         if first == "save":
             force = take_flag(rest, "--force")
             name = take_value(rest, "--name")
-            scope = take_value(rest, "--scope") or "user"
-            if scope not in ("user", "project") or len(rest) != 1:
+            scope = take_value(rest, "--scope")
+            if scope not in (None, "user", "project") or len(rest) != 1:
                 raise UserError("usage: skillpool save <draft.json> [--name N] [--scope user|project] [--force]")
             return cmd_save(Path(rest[0]), name, scope, force, cwd)
         if first == "rm":
