@@ -540,6 +540,10 @@ def launch(name: str | None, passthrough: list[str], cwd: Path) -> int:
             args += [flag, val]
     if not has_flag(passthrough, "-n", "--name", "-r", "--resume", "-c", "--continue", "-p", "--print"):
         args += ["--name", name]
+    # a resumed conversation reuses its recorded system prompt, which would keep the old
+    # profile's instructions; render it fresh so this profile applies
+    if has_flag(passthrough, "-r", "--resume", "-c", "--continue")             and not has_flag(passthrough, "--system-prompt-snapshot"):
+        args += ["--system-prompt-snapshot", "off"]
     args += passthrough
     env = dict(os.environ, AGENT_PROFILE=name)
     err(f"skillpool: profile '{name}' ({profile['scope']})")
@@ -561,7 +565,7 @@ def launch(name: str | None, passthrough: list[str], cwd: Path) -> int:
 def probe(extra: list[str], env: dict | None = None, cwd: Path | None = None) -> dict:
     """Start claude headless, read its init event (skills, MCP, agents, plugins) and stop it."""
     cmd = [claude_exe(), "-p", "reply OK", "--output-format", "stream-json", "--verbose", "--model", "haiku",
-           "--max-turns", "1", *extra]
+           "--max-turns", "1", "--no-session-persistence", *extra]
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
                          text=True, encoding="utf-8", errors="replace", env=env, cwd=cwd)
     init = None
@@ -769,6 +773,7 @@ def cmd_save(draft: Path, name: str | None, scope: str | None, force: bool, cwd:
             out(f"diff written to {fwd(dfile)} (UTF-8). Show it to the user; after they approve, rerun with --force.")
             return 3
         out(f"backup: {fwd(backup(path))}")
+        (RUN_DIR / f"diff-{name}.diff").unlink(missing_ok=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(new_text, encoding="utf-8")
     out(f"{'updated' if force else 'created'}: {fwd(path)}")

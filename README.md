@@ -71,6 +71,8 @@ profile 是一個 JSON 檔：
 - plugin 的 skill 不吃 `skillOverrides`，只能整個 plugin 停用。
 - `mcp.only` 會拿掉所有 claude.ai connectors；`mcp.off` 只藏工具，server 仍會連線，它的說明仍在 system prompt。
 - 同一層同時有 CLAUDE.md 和 AGENTS.md 時，Claude Code 只讀 CLAUDE.md。
+- 接續舊對話（`skillpool <profile> -c` / `-r`）時，Claude Code 預設會沿用舊對話記錄下來的 system prompt；`skillpool` 會自動加 `--system-prompt-snapshot off`，讓新 profile 的指示生效。
+- `user-invocable-only` 的 skill 依官方文件仍可用 `/name` 叫，這點還沒實測。
 - subagent 版本只能限制工具／MCP、加 profile 指示、預載核心 skill；**skill 清單和專案 CLAUDE.md 仍然繼承主線的**。要完整隔離就另開 `skillpool <profile>` 的 session。
 
 ## `skillpool` 指令
