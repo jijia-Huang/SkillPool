@@ -498,8 +498,35 @@ def claude_exe() -> str:
     return exe
 
 
+def pid_alive(pid: int) -> bool:
+    if os.name == "nt":  # os.kill(pid, 0) would terminate the process on Windows
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        code = ctypes.c_ulong()
+        ok = k32.GetExitCodeProcess(h, ctypes.byref(code))
+        k32.CloseHandle(h)
+        return bool(ok) and code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def sweep_run_dir() -> None:
+    """Delete run files of launchers that were killed before they could clean up (they can hold secrets)."""
+    for f in RUN_DIR.glob("*-*-*.*") if RUN_DIR.is_dir() else []:
+        m = re.match(r"^.+-(\d+)-(settings\.json|mcp\.json|prompt\.md)$", f.name)
+        if m and int(m.group(1)) != os.getpid() and not pid_alive(int(m.group(1))):
+            f.unlink(missing_ok=True)
+
+
 def write_run_files(name: str, plan: dict) -> tuple[list[str], list[Path]]:
     RUN_DIR.mkdir(parents=True, exist_ok=True)
+    sweep_run_dir()
     stem = f"{name}-{os.getpid()}"
     args, files = [], []
     if plan["settings"]:
