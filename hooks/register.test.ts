@@ -100,3 +100,20 @@ test('a session started by `skillpool docs` starts with docs on', async ($: any,
   const off = await run($, 'skillpool', 'off')
   expect(off.text).toContain('claude -r sid-1')
 })
+
+test('a skillpool-<name> subagent is held to its own profile', async ($: any, on: any) => {
+  world(on)
+  on('agent.list', () => ({
+    value: [
+      { id: 'a1', type: 'skillpool-docs', description: 'docs work', status: 'running' },
+      { id: 'a2', type: 'general-purpose', description: 'other', status: 'running' },
+    ],
+  }))
+  const call = (agentId: string, skill: string) =>
+    $.tool.call({ tool: 'Skill', tool_use_id: `${agentId}-${skill}`, skill, agentId })
+  expect((await call('a1', 'spine-cli')).deny).toContain('off in the profile "docs"')
+  expect((await call('a1', 'wiki-archive')).deny).toBeUndefined()
+  expect((await call('a2', 'spine-cli')).deny).toBeUndefined()
+  const mcp = await $.tool.call({ tool: 'mcp__devbridge__eval', tool_use_id: 'a1-mcp', agentId: 'a1' })
+  expect(mcp.deny).toBeDefined()
+})

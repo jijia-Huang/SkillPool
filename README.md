@@ -156,7 +156,7 @@ profile 是一個 JSON 檔：
 - 同一層同時有 CLAUDE.md 和 AGENTS.md 時，Claude Code 只讀 CLAUDE.md。
 - 接續舊對話（`skillpool <profile> -c` / `-r`）時，Claude Code 預設會沿用舊對話記錄下來的 system prompt；`skillpool` 會自動加 `--system-prompt-snapshot off`，讓新 profile 的指示生效。
 - `user-invocable-only` 的 skill：人可以用 `/name` 叫，模型自己呼叫會被拒絕（實測）。
-- subagent 版本只能限制工具／MCP、加 profile 指示、預載核心 skill；**skill 清單和專案 CLAUDE.md 仍然繼承主線的**。要完整隔離就另開 `skillpool <profile>` 的 session。
+- `skillpool-<profile>` subagent：MCP／工具照 profile 限制；profile 排除了全域和專案指示檔時，subagent 不讀任何 CLAUDE.md（`omitClaudeMd`），只用 profile 的指示；profile 以外的 skill 由 SkillPool 的 mod 擋下。但 **skill 清單本身仍是主線那份**（看得到、用了被擋），Claude Code 沒有提供 subagent 的 skill 白名單。要清單真的變短，另開 `skillpool <profile>` 的 session。
 
 ## `skillpool` 指令
 
@@ -228,4 +228,4 @@ types/                 mod 的 state 型別
 ## Roadmap
 
 - 沒有組織管理的環境：切換時直接改寫 skill 清單和 CLAUDE.md
-- subagent 的 skill 清單也依 profile 過濾
+- subagent 的 skill 清單也依 profile 過濾（Claude Code 目前沒有原生作法；組織管理的帳號也不讓個人 plugin 改寫清單）

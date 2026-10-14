@@ -76,7 +76,7 @@ skillpool <子命令> ...
 - `instructions.exclude`：`"user"` = `~/.claude/CLAUDE.md`（含 `~/.claude/rules/`）；`"project"` = 這個資料夾往上所有的 CLAUDE.md、CLAUDE.local.md、AGENTS.md、`.claude/CLAUDE.md`、`.claude/rules/`，以及子資料夾裡的；其他字串當 glob。CLAUDE.md 和 AGENTS.md 在同一層時 Claude Code 只讀 CLAUDE.md，排除 CLAUDE.md 後 AGENTS.md 會冒出來，所以 `project` 兩個都排除。
 - `instructions.append`：加進 system prompt 的內容。字串是檔案路徑，可用 `~`；相對路徑在 **project profile 從專案根目錄算**（例如 `CLAUDE.md`），在 user profile 從 `~/.claude/skillpool/profiles/` 算；`{file, section}` 只取那個 `#`／`##` 標題底下的段落（`section` 寫標題原文）。只要某份指示檔的幾段、不要整份：把那份排除（全域的用 `"user"`，專案的用 `"project"`），再用 `append` 加回那幾段。沒排除就 append 同一份檔案，內容會載入兩次，`show` 會警告。
 - `model`、`effort`：這個 profile 開 session 時的預設值；使用者在指令列自己給的參數優先。
-- `agent`：產生 `skillpool-<name>` subagent 的設定。`preloadSkills` 會把那幾個 skill 的**全文**預先載入 subagent（每次派工都付這個 token），只放 1～3 個核心的。`tools` 是工具白名單（不給就繼承全部）。`disallowedTools` 額外要擋的工具，只能放工具名稱或 `mcp__<server>`，**不要放 `Skill(x)`**，那會讓整個 Skill 工具消失。
+- `agent`：產生 `skillpool-<name>` subagent 的設定。`preloadSkills` 會把那幾個 skill 的**全文**預先載入 subagent（每次派工都付這個 token），只放 1～3 個核心的。`tools` 是工具白名單（不給就繼承全部）。`disallowedTools` 額外要擋的工具，只能放工具名稱或 `mcp__<server>`，**不要放 `Skill(x)`**，那會讓整個 Skill 工具消失。`omitClaudeMd`：subagent 不讀任何 CLAUDE.md；不寫時，profile 的 `instructions.exclude` 同時有 `user` 和 `project` 就自動開啟（subagent 只能全讀或全不讀）。
 - `meta`：自由欄位（信心等級、來源），程式不讀。
 
 profile 檔位置：user 層在 `~/.claude/skillpool/profiles/<name>.json`（所有專案都看得到），project 層在 `<專案>/.claude/skillpool/profiles/<name>.json`（`save --scope project`）。
@@ -96,7 +96,7 @@ profile 檔位置：user 層在 `~/.claude/skillpool/profiles/<name>.json`（所
 - **整個 session 換 profile 只有人能做**：人在終端機執行 `skillpool <name>`，就會在目前資料夾開一個用這個 profile 的新 claude（其他參數照常傳給 claude，例如 `skillpool web-dev -c`）。不要試圖重開或切換自己這個 session，只能建議使用者這樣開。
 - `skillpool` 不帶 profile 名稱時讀環境變數 `AGENT_PROFILE`；都沒有就開一般的 claude。用 profile 開的 session 裡 `AGENT_PROFILE` 會是那個 profile 名稱。
 - **派工給 subagent**：主線接到任務時，從 Agent 工具的清單挑 description 開頭是 `[SkillPool profile: <name>]`、`Use when` 最符合任務的 `skillpool-<name>`。沒有合適的就用一般 agent，不要硬套。
-- subagent 版本的隔離比較弱：它會限制 MCP 和工具、加上 profile 的指示、預載核心 skill，但 **skill 清單和專案的 CLAUDE.md 仍然繼承主線的**。任務需要完整隔離（例如不能被別的 skill 干擾）時，建議使用者另開 `skillpool <name>` 的 session。
+- subagent 版本：限制 MCP 和工具、加上 profile 的指示、預載核心 skill，profile 排除指示檔時不讀 CLAUDE.md，profile 以外的 skill 被呼叫時由 SkillPool 擋下。但 **skill 清單仍是主線那份**（看得到、用了被擋）。任務需要清單真的乾淨時，建議使用者另開 `skillpool <name>` 的 session。
 - **session 中途切換**：人在 session 裡打 `/skillpool <name>`（`/skillpool` 列出 profile，`/skillpool off` 關掉）。這是給人用的指令；你不要自己切，只能建議使用者打。切換後：
   - profile 以外的 skill（Skill 工具和 `/name`）、MCP 工具、停用 plugin 的 agent 一律被拒絕；
   - 你會收到一則說明：現在能用哪些 skill／MCP，以及 profile 的指示；

@@ -198,6 +198,9 @@ def validate(data) -> list[str]:
                 elif k == "model":
                     if not isinstance(v, str):
                         e.append("'agent.model' must be a string")
+                elif k == "omitClaudeMd":
+                    if not isinstance(v, bool):
+                        e.append("'agent.omitClaudeMd' must be true or false")
                 else:
                     e.append(f"unknown key 'agent.{k}'")
     return e
@@ -885,15 +888,30 @@ def agent_text(profile: dict, cwd: Path) -> str:
     model = ag.get("model") or data.get("model")
     if model:
         fm.append(f"model: {model}")
+    if omit_claude_md(data):
+        fm.append("omitClaudeMd: true")
     fm.append("---")
     body = [AGENT_MARKER, "",
             f"You are a subagent running under the SkillPool profile `{profile['name']}`.",
             f"Scope: {desc}" + (f" ({when})" if when else ""),
             "Stay within that scope. If the task needs tools or skills outside it, say so in your reply "
             "instead of working around it."]
+    sk = data.get("skills", {})
+    if "only" in sk:
+        allowed = list(dict.fromkeys(sk["only"] + sk.get("on", [])))
+        body.append(f"Skills you may use: {', '.join(allowed) or '(none)'}. Other skills in your list are refused "
+                    "(the SkillPool plugin blocks them).")
     if plan["append"]:
         body += ["", plan["append"]]
     return "\n".join(fm) + "\n" + "\n".join(body) + "\n"
+
+
+def omit_claude_md(data: dict) -> bool:
+    """A subagent drops every CLAUDE.md or none: drop them when the profile excludes both kinds."""
+    explicit = (data.get("agent") or {}).get("omitClaudeMd")
+    if explicit is not None:
+        return explicit
+    return {"user", "project"} <= set(data.get("instructions", {}).get("exclude", []))
 
 
 def write_agents(cwd: Path, only: str | None = None, dry_run: bool = False) -> int:

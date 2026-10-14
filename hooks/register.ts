@@ -9,7 +9,7 @@
 
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { SkillpoolActive } from '../types'
+import type { SkillpoolActive, SkillpoolPolicy } from '../types'
 import {
   isAgentAllowed,
   isSkillAllowed,
@@ -23,6 +23,7 @@ import {
 const ACTIVE = { plugin: 'skillpool', key: 'active' } as const
 const LAUNCHED = { plugin: 'skillpool', key: 'launched' } as const
 const NAME = /^[a-z0-9][a-z0-9-]{0,40}$/
+const AGENT_PREFIX = 'skillpool-' // the subagents `skillpool agents` generates
 
 type Found = { name: string; scope: string; path: string; root: string | null; data: ProfileData }
 type Engine = EngineInterface
@@ -87,6 +88,22 @@ async function appendedText($: Engine, f: Found): Promise<{ text: string; proble
     parts.push(text.trim())
   }
   return { text: parts.join('\n\n'), problems }
+}
+
+// agent id -> the profile of a skillpool-<name> subagent (null for any other agent); a reload starts it over
+const subagentProfiles = new Map<string, { name: string; policy: SkillpoolPolicy } | null>()
+
+/** The profile a `skillpool-<name>` subagent was generated from, by the loop id its calls carry. */
+async function subagentProfile($: Engine, agentId: string) {
+  if (!subagentProfiles.has(agentId)) {
+    const agent = (await $.agent.list()).find(a => a.id === agentId)
+    const name = agent?.type.startsWith(AGENT_PREFIX) ? agent.type.slice(AGENT_PREFIX.length) : null
+    const f = name ? (await listProfiles($)).get(name) : undefined
+    // an agent not listed yet is asked again on its next call
+    if (agent) subagentProfiles.set(agentId, f ? { name: f.name, policy: makePolicy(f.data) } : null)
+    else return null
+  }
+  return subagentProfiles.get(agentId) ?? null
 }
 
 async function activeOf($: Engine): Promise<SkillpoolActive | null> {
@@ -205,20 +222,27 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // the session's profile, and for a skillpool-<name> subagent its own profile too
   on('tool.call', async ($, e, next) => {
+    const rules: { name: string; policy: SkillpoolPolicy }[] = []
     const active = await activeOf($)
-    if (!active) return next(e)
-    const p = active.policy
+    if (active) rules.push(active)
+    if (e.agentId) {
+      const own = await subagentProfile($, e.agentId)
+      if (own) rules.push(own)
+    }
     const input = e as unknown as Record<string, unknown>
-    if (e.tool === 'Skill' && typeof input.skill === 'string' && !isSkillAllowed(p, input.skill, 'model')) {
-      return { deny: `SkillPool: the skill "${input.skill}" is off in the profile "${active.name}".` }
-    }
-    if ((String(e.tool) === 'Agent' || String(e.tool) === 'Task') && typeof input.subagent_type === 'string'
-      && !isAgentAllowed(p, input.subagent_type)) {
-      return { deny: `SkillPool: the agent type "${input.subagent_type}" is off in the profile "${active.name}".` }
-    }
-    if (!isToolAllowed(p, e.tool)) {
-      return { deny: `SkillPool: ${e.tool} is off in the profile "${active.name}".` }
+    for (const { name, policy } of rules) {
+      if (e.tool === 'Skill' && typeof input.skill === 'string' && !isSkillAllowed(policy, input.skill, 'model')) {
+        return { deny: `SkillPool: the skill "${input.skill}" is off in the profile "${name}".` }
+      }
+      if ((String(e.tool) === 'Agent' || String(e.tool) === 'Task') && typeof input.subagent_type === 'string'
+        && !isAgentAllowed(policy, input.subagent_type)) {
+        return { deny: `SkillPool: the agent type "${input.subagent_type}" is off in the profile "${name}".` }
+      }
+      if (!isToolAllowed(policy, e.tool)) {
+        return { deny: `SkillPool: ${e.tool} is off in the profile "${name}".` }
+      }
     }
     return next(e)
   })
