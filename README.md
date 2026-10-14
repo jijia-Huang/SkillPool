@@ -4,7 +4,7 @@ A Claude Code plugin for organizing your skills, MCP servers, subagents and inst
 
 把 Claude Code 的 skills、MCP、subagents、指示檔整理成可切換的 profile：同一個資料夾可以同時開好幾個設定不同的 session，主線也能依任務挑 profile 派工給 subagent。
 
-## 三個部分
+## 包含什麼
 
 | | 做什麼 |
 |---|---|
@@ -14,6 +14,88 @@ A Claude Code plugin for organizing your skills, MCP servers, subagents and inst
 | `/skillpool <profile>` | session 裡直接切換 profile，不用重開 |
 
 每個 profile 也會自動產生一個 `skillpool-<profile>` subagent，主線可以照 profile 的 `whenToUse` 派工。
+
+## 安裝
+
+需要 Claude Code 和 Python 3.10 以上（只用標準函式庫）。
+
+### 1. 安裝 plugin
+
+在 Claude Code 裡輸入：
+
+```
+/plugin install skillpool --marketplace jijia-Huang/SkillPool
+```
+
+出現 `Add marketplace?` 時按 `y`，scope 選 **user**。也可以在終端機裝：
+
+```
+claude plugin marketplace add jijia-Huang/SkillPool
+claude plugin install skillpool@skillpool
+```
+
+裝好後開新的 session（或在目前的 session 跑 `/reload-plugins`），就有 `/skillpool:doctor`、`/skillpool:profile` 和 `/skillpool`。
+
+### 2. 安裝 `skillpool` 終端機指令
+
+要用 `skillpool <profile>` 從終端機開 session 才需要這一步。
+
+Windows（PowerShell）：
+
+```
+python "$HOME\.claude\plugins\marketplaces\skillpool\scripts\skillpool.py" install-shim
+```
+
+macOS / Linux：
+
+```
+python3 ~/.claude/plugins/marketplaces/skillpool/scripts/skillpool.py install-shim
+```
+
+- 會在 PATH 上的 `~/.local/bin` 或 `~/bin` 放一個 `skillpool` 指令（Windows 另外放 `skillpool.cmd`）。兩個資料夾都不在 PATH 上時，加 `--dir <PATH 上的某個資料夾>`。
+- 你用哪個 Python 執行這一行，`skillpool` 之後就固定用那個 Python。要用 conda 環境，就用那個環境的 `python.exe` 執行。
+- 指令指向 marketplace 的那份 clone，plugin 更新後不用重裝。
+- 開一個新的終端機，`skillpool list` 有輸出就裝好了。
+
+### 3. 開始用
+
+```
+/skillpool:doctor            分析你的設定，給分群建議和 profile 草稿
+/skillpool:profile           請 AI 建立或修改 profile（例如把 doctor 的草稿存起來）
+skillpool <profile>          在終端機用某個 profile 開 claude
+/skillpool <profile>         在 session 裡直接切換
+```
+
+要用 `skills.only` 的話，先在終端機跑一次 `skillpool check`，它會記下內建 skill 的名稱，profile 才擋得到它們。
+
+### 更新
+
+```
+claude plugin marketplace update skillpool
+claude plugin update skillpool@skillpool
+```
+
+然後在 session 裡跑 `/reload-plugins`，或開新的 session。
+
+### 解除安裝
+
+```
+claude plugin uninstall skillpool@skillpool
+claude plugin marketplace remove skillpool
+```
+
+再刪掉 `~/.local/bin/skillpool`（Windows 還有 `skillpool.cmd`）和 `~/.claude/agents/skillpool-*.md`（profile 產生的 subagent）。profile、報告、快取都在 `~/.claude/skillpool/`，不要了也可以一起刪。
+
+### 從本機資料夾安裝（開發用）
+
+```
+git clone https://github.com/jijia-Huang/SkillPool
+claude plugin marketplace add ./SkillPool
+claude plugin install skillpool@skillpool
+python SkillPool/scripts/skillpool.py install-shim
+```
+
+改完檔案，在 session 裡跑 `/reload-plugins` 就生效。
 
 ## `/skillpool:doctor`
 
@@ -101,32 +183,6 @@ skillpool install-shim
 2. 把啟動指令從 `claude` 換成 `skillpool`，
 
 就會套用那個 profile；沒裝 SkillPool 時照常用 `claude`。
-
-## 安裝
-
-在 Claude Code 裡：
-
-```
-/plugin install skillpool --marketplace jijia-Huang/SkillPool
-```
-
-出現 `Add marketplace?` 時按 `y`，scope 選 user。
-
-或從本機資料夾安裝（開發用，改完檔案在 session 裡跑 `/reload-plugins` 就生效）：
-
-```
-git clone https://github.com/jijia-Huang/SkillPool
-claude plugin marketplace add ./SkillPool
-claude plugin install skillpool@skillpool
-```
-
-接著把 `skillpool` 指令放上 PATH（會放在 `~/.local/bin` 或 `~/bin`，並記住目前的 Python）：
-
-```
-python <SkillPool 資料夾>/scripts/skillpool.py install-shim
-```
-
-需要 Python 3.10+（只用標準函式庫）。
 
 ## 隱私
 
