@@ -1,7 +1,9 @@
 {
   "name": "skillpool",
-  "version": "0.3.0",
-  "description": "Organize Claude Code skills, MCP servers, subagents and instruction files into profiles. /skillpool:doctor suggests groups from your real usage; /skillpool:profile manages profiles; `skillpool <profile>` starts claude with one; /skillpool <profile> switches mid-session; each profile also becomes a skillpool-<profile> subagent.",
-  "author": { "name": "jijiahuang" },
+  "version": "0.4.0",
+  "description": "Switchable Claude Code profiles: each profile is a folder with its own CLAUDE.md (rules and memory), skills picked from a shared pool, and plugin/MCP/model switches, layered on top of your global and project setup. `skillpool <profile>` starts claude with one; /skillpool <profile> switches mid-session; /skillpool:doctor suggests profiles from your real usage; each profile also becomes a skillpool-<profile> subagent.",
+  "author": {
+    "name": "jijiahuang"
+  },
   "types": "./types/index.d.ts"
 }

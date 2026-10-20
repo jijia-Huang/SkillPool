@@ -1,27 +1,25 @@
 // Pure profile logic shared by the hooks: no `$`, so the tests call it directly.
-// Mirrors scripts/skillpool.py, which applies the same profile files at launch.
+// Mirrors scripts/skillpool.py, which owns the profile folders and the session links.
 
 import type { SkillpoolPolicy } from '../types'
 
 export type ProfileData = {
   description?: string
   whenToUse?: string
-  skills?: {
-    only?: string[]
-    others?: 'off' | 'user-invocable-only' | 'name-only'
-    on?: string[]
-    off?: string[]
-    nameOnly?: string[]
-    userOnly?: string[]
-  }
+  skills?: { use?: string[]; off?: string[] }
   plugins?: { off?: string[]; on?: string[] }
-  mcp?: { only?: string[]; off?: string[] }
+  mcp?: { only?: string[]; off?: string[]; project?: boolean }
   instructions?: { exclude?: string[]; append?: (string | { file: string; section?: string })[] }
+  memory?: 'profile' | 'native'
   model?: string
   effort?: string
   agent?: unknown
   meta?: unknown
 }
+
+export const MEMORY_HEADING = '## 跨專案記憶'
+export const INDEX_START = '<!-- skillpool:memory-index:start -->'
+export const INDEX_END = '<!-- skillpool:memory-index:end -->'
 
 /** Tool prefix Claude Code gives a server: non-ASCII dropped, other invalid characters to `_`. */
 export function mcpPrefix(server: string): string {
@@ -31,33 +29,22 @@ export function mcpPrefix(server: string): string {
 
 const pluginName = (id: string) => id.split('@')[0] ?? id
 
+/** What the mod enforces for a profile. Its skills and CLAUDE.md come in through the session link instead. */
 export function makePolicy(data: ProfileData): SkillpoolPolicy {
-  const sk = data.skills ?? {}
-  const only = sk.only ? [...sk.only, ...(sk.on ?? [])] : null
   return {
-    skillsOnly: only,
-    others: sk.others ?? 'off',
-    skillsOff: sk.off ?? [],
-    skillsUserOnly: sk.userOnly ?? [],
+    skillsOff: data.skills?.off ?? [],
     pluginsOff: (data.plugins?.off ?? []).map(pluginName),
     mcpOnly: data.mcp?.only ? data.mcp.only.map(mcpPrefix) : null,
     mcpOff: (data.mcp?.off ?? []).map(mcpPrefix),
   }
 }
 
-export type Caller = 'model' | 'person'
-
-/** Whether a skill may run: by the model (Skill tool) or by the person (`/name`). */
-export function isSkillAllowed(p: SkillpoolPolicy, name: string, by: Caller): boolean {
+/** Whether a skill may run (Skill tool or `/name`). */
+export function isSkillAllowed(p: SkillpoolPolicy, name: string): boolean {
   if (name.startsWith('skillpool:')) return true // the profile tools stay reachable
   const plugin = name.includes(':') ? name.split(':')[0] : null
   if (plugin && p.pluginsOff.includes(plugin)) return false
-  if (p.skillsOff.includes(name)) return false
-  if (p.skillsUserOnly.includes(name)) return by === 'person'
-  if (p.skillsOnly === null || p.skillsOnly.includes(name)) return true
-  if (p.others === 'off') return false
-  if (p.others === 'user-invocable-only') return by === 'person'
-  return true // name-only: listed by name, still callable
+  return !p.skillsOff.includes(name)
 }
 
 /** Whether a tool may be called; only `mcp__*` tools are ever hidden. */
@@ -76,49 +63,55 @@ export function isAgentAllowed(p: SkillpoolPolicy, agent: string): boolean {
   return !(plugin && p.pluginsOff.includes(plugin))
 }
 
-/** The `#`/`##` section titled `heading`, through the next heading of the same or higher level. */
-export function sectionText(text: string, heading: string): string | null {
-  const lines = text.split(/\r?\n/)
-  let start = -1
-  let level = 0
-  let inCode = false
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? ''
-    if (line.trimStart().startsWith('```')) inCode = !inCode
-    const m = inCode ? null : /^(#{1,6})\s+(.*?)\s*$/.exec(line)
-    if (!m) continue
-    const hashes = m[1] ?? ''
-    if (start < 0 && m[2] === heading.trim()) {
-      start = i
-      level = hashes.length
-    } else if (start >= 0 && hashes.length <= level) {
-      return lines.slice(start, i).join('\n').trim()
-    }
+const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+
+/**
+ * The part of `path` inside a profile folder, seen directly (`profiles/<name>/...`) or through a
+ * session link (`sessions/<link>/...`); null for any other path.
+ */
+export function profileRelative(path: string, spHome: string): string | null {
+  const p = norm(path)
+  for (const area of ['profiles', 'sessions']) {
+    const base = `${norm(spHome)}/${area}/`
+    if (!p.startsWith(base)) continue
+    const rest = p.slice(base.length)
+    const slash = rest.indexOf('/')
+    return slash < 0 ? '' : rest.slice(slash + 1)
   }
-  return start >= 0 ? lines.slice(start).join('\n').trim() : null
+  return null
 }
 
-/** What the model is told when the profile is switched on. */
-export function profileNote(name: string, data: ProfileData, p: SkillpoolPolicy, appended: string): string {
-  const out: string[] = [`[SkillPool] The session now runs under the profile "${name}".`]
-  if (data.description) out.push(`Profile: ${data.description}`)
-  if (p.skillsOnly !== null) {
-    const rest =
-      p.others === 'off' ? 'every other skill is switched off'
-        : p.others === 'user-invocable-only' ? 'every other skill is for the person to run, not for you'
-          : 'other skills stay available'
-    out.push(`Skills you may use: ${p.skillsOnly.join(', ') || '(none)'}; ${rest}, even if the skill list still shows it.`)
+/**
+ * Why a write into a profile folder is refused, or null when the model may make it.
+ * The model may keep memory (`memory/`, and CLAUDE.md below the memory heading, outside the
+ * index SkillPool keeps); rules, profile.json and skill links go through `skillpool save`.
+ */
+export function writeRefusal(
+  rest: string,
+  write: { kind: 'edit'; text: string | null; oldStrings: string[]; newStrings: string[] } | { kind: 'write' },
+): string | null {
+  const save = 'change it with `skillpool save` (the user sees a diff first)'
+  if (rest.startsWith('memory/')) return null
+  if (rest !== 'claude.md') return `SkillPool: profile files outside memory/ are not edited directly; ${save}.`
+  if (write.kind === 'write' || write.text === null) {
+    return `SkillPool: the profile's CLAUDE.md is not rewritten whole; edit its "${MEMORY_HEADING.slice(3)}" section, or ${save}.`
   }
-  if (p.skillsOff.length) out.push(`Switched off: ${p.skillsOff.join(', ')}.`)
-  if (p.pluginsOff.length) out.push(`Plugins switched off (their skills, tools and agents): ${p.pluginsOff.join(', ')}.`)
-  if (p.mcpOnly !== null) out.push(`MCP tools you may use: only those of ${p.mcpOnly.join(', ') || '(none)'}.`)
-  if (p.mcpOff.length) out.push(`MCP tools switched off: those of ${p.mcpOff.join(', ')}.`)
-  const ex = data.instructions?.exclude ?? []
-  if (ex.length) {
-    const what = ex.map(k => (k === 'user' ? "the user's global CLAUDE.md" : k === 'project' ? "this project's CLAUDE.md / AGENTS.md" : k))
-    out.push(`Disregard the instructions from ${what.join(' and ')} while this profile is on.`)
+  const text = write.text
+  const heading = text.indexOf(MEMORY_HEADING)
+  const start = text.indexOf(INDEX_START)
+  const end = start < 0 ? -1 : text.indexOf(INDEX_END, start) + INDEX_END.length
+  for (const old of write.oldStrings) {
+    const at = text.indexOf(old)
+    if (at < 0) continue // the edit fails on its own
+    if (heading < 0 || at < heading + MEMORY_HEADING.length) {
+      return `SkillPool: that part of the profile's CLAUDE.md holds its rules; ${save}. Memory goes below "${MEMORY_HEADING}".`
+    }
+    if (start >= 0 && at < end && at + old.length > start) {
+      return 'SkillPool: the memory index is kept by SkillPool; write memory files under memory/ instead.'
+    }
   }
-  out.push('Calls outside the profile are refused.')
-  if (appended) out.push('', 'Profile instructions:', appended)
-  return out.join('\n')
+  if (write.newStrings.some(s => s.includes(INDEX_START) || s.includes(INDEX_END))) {
+    return 'SkillPool: the memory index markers are kept by SkillPool.'
+  }
+  return null
 }

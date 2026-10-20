@@ -78,37 +78,38 @@ python "<本 skill 目錄>/scripts/scan.py" --cwd "<目前工作目錄>" [--days
 - **規則衝突時，流程相依優先**：一條流程（例如一個依序叫用 review、implement、verify 的 pipeline skill，連同它叫到的所有 skill 和 agent）必須完整放在同一群，這種群可以超過 12 個，在理由裡註明「流程群」就好，不要為了壓數量把成員拆出去。
 - 一個項目可以在多個群。
 - `base` 群：放**通用指示段落**（跟特定領域無關的工作規範），以及**同時滿足**「在 3 個以上專案家族用到」和「超過 10% 的 session 用到」的 skill / MCP / agent。只在一個專案家族用的東西，用量再高也屬於那個領域群，不進 base。沒有東西達到門檻時，`base` 只放指示和常用 agent，**skill 留空是正常的**，不用硬塞。
+- SkillPool 是疊加式的：`base` 群**留在全域**（`~/.claude/skills`、`~/.claude/CLAUDE.md`），每個 session 都看得到；其他群的 skill 建議搬進池子（`skillpool pool add`），由 profile 用 `skills.use` 加回來；只跟某群有關的指示段落，建議移到那個 profile 的 CLAUDE.md。
 - 長期 `off`、而且視窗內沒被用過的 skill，不放進任何群或 profile，另外列成「封存候選」清單。
 - 群名用短的 kebab-case，看名字就知道用途（`web-dev`、`agent-collab`、`docs`）。
 - 每群一定要寫 `whenToUse`：一句話說「什麼任務該用這群」，寫法像 subagent 的 description，因為之後主線會靠它挑 profile。
 - 每群標一個信心等級：`高`（有 co_usage 或流程相依佐證）、`中`（只有專案家族或主題）、`低`（推測，等使用資料累積再確認）。
 - 指示檔（CLAUDE.md / AGENTS.md）也要分：讀 `inventory.instructions[].sections`（每個 `#`／`##` 段落和它的 token），判斷哪些段落是通用的（進 `base`）、哪些只跟某群有關。`imports` 是檔案裡的 `@路徑` 引用。
 
-最後把群組合成 profile（一個 profile = 幾個群 + 指示）。草稿直接用 SkillPool 的 profile 格式，完整欄位說明在同一個 plugin 的 `skills/profile/SKILL.md`「Profile 格式」一節（`<本 skill 目錄>/../profile/SKILL.md`），寫草稿前先讀。例：
+最後把每個非 `base` 的群組合成 profile。草稿用 SkillPool 的格式，完整說明在同一個 plugin 的 `skills/profile/SKILL.md`（`<本 skill 目錄>/../profile/SKILL.md`），寫草稿前先讀。每個 profile 兩份草稿：
+
+`profile-<name>.json`：
 
 ```json
 {
   "description": "前端網頁開發",
   "whenToUse": "前端網頁的開發、除錯與瀏覽器測試",
-  "skills": { "only": ["frontend-design", "webapp-testing", "verify"] },
+  "skills": { "use": ["frontend-design", "webapp-testing", "verify"] },
+  "plugins": { "off": [] },
   "mcp": { "only": ["playwright"] },
-  "instructions": {
-    "exclude": ["user"],
-    "append": [{ "file": "~/.claude/CLAUDE.md", "section": "Code style" }]
-  },
   "agent": { "preloadSkills": ["frontend-design"] },
   "meta": { "confidence": "中", "source": "doctor <時間>",
             "estTokens": { "listing": 1200, "instructions": 460, "estimated": false } }
 }
 ```
 
-- profile 沒有繼承：`base` 群的成員要直接寫進每個 profile 的 `skills.only`／`mcp.only`。
-- `skills.only` 以外的 skill 預設整個關掉（`off`，人也不能用 `/` 叫）；要保留 `/` 就加 `"others": "user-invocable-only"`。plugin 的 skill 擋不掉，要擋就把整個 plugin 放進 `plugins.off`。
-- `mcp.only` 會拿掉所有 claude.ai connectors；只想藏幾個 server 就用 `mcp.off`。
-- `instructions.append` 每筆是檔案路徑或 `{ file, section }`：`section` 填 `sections[].heading` 的原文。`exclude` 填 `"user"`（全域 CLAUDE.md）、`"project"`（這個專案的 CLAUDE.md／AGENTS.md）或 glob。要用全域指示的某幾段、又不要整份，就 `exclude: ["user"]` 加 `append` 那幾段。
-- `meta.estTokens.listing` 用成員的 `listing_tokens` 加總；`instructions` 用 `append` 列出的段落的 `sections[].tokens` 加總（整份檔案就用它的 `tokens`）。專案自己會自動載入的 CLAUDE.md 不算進去。只要有任何一項是你估的（例如不在磁碟上的 skill），`estimated` 就填 `true`。
+`profile-<name>.md`（這個 profile 的 CLAUDE.md）：標題、一句用途、`## 規則`（只跟這群有關的指示段落，從原本的指示檔搬過來或改寫），以及空的 `## 跨專案記憶` 一節。記憶索引區塊不用寫，SkillPool 會自己加。
+
+- `skills.use` 只列**池子**裡的 skill（或建議搬進池子的）；全域留下的 `base` skill 和專案自己的 skill 不用列。報告要寫明哪些 skill 需要先 `pool add`。
+- plugin 的 skill 不進池子；這群用不到的 plugin 放進 `plugins.off`。
+- `mcp.only` 會拿掉所有 claude.ai connectors（專案 `.mcp.json` 裡已核准的 server 會保留）；只想藏幾個 server 就用 `mcp.off`。
+- `meta.estTokens.listing` 用成員的 `listing_tokens` 加總；`instructions` 用 `.md` 草稿的段落 token 加總。只要有任何一項是你估的，`estimated` 就填 `true`。
 - 逐項的估計值寫在報告第 3 節「分群建議」每群的成員表裡，標「估計」。
-- 每個草稿另存一份 `profile-<name>.json`（純 JSON，沒有註解），放在報告同一個資料夾，之後可以直接 `skillpool save` 它。
+- 兩份草稿（純 JSON／純 Markdown）放在報告同一個資料夾，之後用 `skillpool new <name>`，再 `skillpool save profile-<name>.json --name <name>`、`skillpool save profile-<name>.md --name <name>` 存起來。
 
 ### 2.4 優化建議
 
@@ -120,7 +121,8 @@ python "<本 skill 目錄>/scripts/scan.py" --cwd "<目前工作目錄>" [--days
 | 清單只留名字，省描述的 token | `"name-only"` |
 | 完全關掉 | `"off"`（plugin 的 skill 不吃這個設定，要用 `/plugin` 停用整個 plugin） |
 | 某個專案關掉某個 MCP | 在那個專案用 `/mcp` 關掉（寫進 `~/.claude.json` 的 `disabledMcpServers`） |
-| 單一 session 用不同設定 | 存成 SkillPool profile，用 `skillpool <profile>` 開 claude（見 `/skillpool:profile`） |
+| 單一 session 用不同設定 | 存成 SkillPool profile，用 `skillpool <profile>` 開 claude，或在 session 裡 `/skillpool <profile>`（見 `/skillpool:profile`） |
+| 只在某類工作用到的 skill 不要佔每個 session 的清單 | `skillpool pool add <skill>` 搬進池子，由需要的 profile 用 `skills.use` 加回來 |
 | 刪掉不用的 MCP | `claude mcp remove <name> -s user`（只用在真的沒在用的 server；plugin 帶的 MCP 要停用 plugin。和 plugin 重複的手動設定不要刪，見 2.1） |
 | 指示檔共用同一段內容 | 抽成獨立檔，在 CLAUDE.md 裡用 `@路徑` 引用 |
 | 收斂複製到多個專案的 skill | 搬到 `~/.claude/skills`（全域）或做成 plugin，再刪掉各專案的副本；刪之前先比對副本差異 |
@@ -150,7 +152,7 @@ SkillPool Doctor（90 天，172 個 session）
 完整報告：<報告路徑>
 ```
 
-3. 最後提供後續選項，一句話列出讓使用者挑：調整分群、直接套用某條優化（**套用前先給 diff，使用者同意才改**）、把 profile 草稿存成 SkillPool profile（照 `/skillpool:profile` 的流程用 `skillpool save`：新的直接存，同名已存在的要先給使用者看 diff）。
+3. 最後提供後續選項，一句話列出讓使用者挑：調整分群、直接套用某條優化（**套用前先給 diff，使用者同意才改**）、把 profile 草稿存成 SkillPool profile（照 `/skillpool:profile` 的流程：新的直接建，同名已存在的要先給使用者看 diff；搬 skill 進池子要先問）。
 
 ## 注意
 

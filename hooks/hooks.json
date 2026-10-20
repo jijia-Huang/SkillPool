@@ -1,1 +1,8 @@
-{ "modules": ["./register.ts"] }
+{
+  "modules": ["./register.ts"],
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "skillpool hook session-start", "timeout": 30 } ] }
+    ]
+  }
+}
